@@ -1,0 +1,12 @@
+###############################################################################
+#                                                                             #
+#                      AUTHORIZED ACCESS ONLY                                 #
+#                                                                             #
+#  This system is for authorized use only. Unauthorized access or use of     #
+#  this system is strictly prohibited and may be subject to criminal and     #
+#  civil penalties. All activities on this system are monitored and logged.  #
+#  By accessing this system, you consent to such monitoring and logging.     #
+#                                                                             #
+#  If you are not an authorized user, disconnect immediately.                #
+#                                                                             #
+###############################################################################
