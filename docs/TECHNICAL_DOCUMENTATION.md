@@ -16,7 +16,7 @@
 
 This document provides comprehensive technical documentation for the RHEL 9 CIS Benchmark Automated Compliance Tool v2.0.0, including complete implementation status and advanced logging capabilities.
 
-**Current Status**: ✅ **Complete** - 328 checks covered
+**Current Status**: ✅ **Complete** - 333 checks covered
 
 The tool provides:
 - Automated compliance checking against CIS RHEL 9 Benchmark v2.0.0
@@ -36,12 +36,12 @@ The tool provides:
 |---------|-------------|--------|--------|
 | 1 | Initial Setup | 72 | ✅ Complete |
 | 2 | Services | 39 | ✅ Complete |
-| 3 | Network Configuration | 13 | ✅ Complete |
+| 3 | Network Configuration | 18 | ✅ Complete |
 | 4 | Firewall Configuration | 11 | ✅ Complete |
 | 5 | Access Control | 71 | ✅ Complete |
 | 6 | Logging and Auditing | 100 | ✅ Complete |
 | 7 | System Maintenance | 22 | ✅ Complete |
-| **TOTAL** | | **328** | **✅ Complete** |
+| **TOTAL** | | **333** | **✅ Complete** |
 
 ### Section 1: Initial Setup (72 checks)
 
@@ -148,28 +148,31 @@ The tool provides:
 - 2.4.1.8 - Ensure crontab is restricted to authorized users
 - 2.4.2.1 - Ensure at is restricted to authorized users
 
-### Section 3: Network Configuration (13 checks)
+### Section 3: Network Configuration (18 checks)
 
-#### 3.1 Disable Unused Network Protocols (4 checks)
-- 3.1.1 - Ensure DCCP is disabled
-- 3.1.2 - Ensure SCTP is disabled
-- 3.1.3 - Ensure RDS is disabled
-- 3.1.4 - Ensure TIPC is disabled
+#### 3.1 Configure Network Devices (3 checks)
+- 3.1.1 - Ensure IPv6 status is identified (Manual)
+- 3.1.2 - Ensure wireless interfaces are disabled
+- 3.1.3 - Ensure bluetooth services are not in use
 
-#### 3.2 Network Parameters (Host Only) (2 checks)
-- 3.2.1 - Ensure IP forwarding is disabled
-- 3.2.2 - Ensure packet redirect sending is disabled
+#### 3.2 Configure Network Kernel Modules (4 checks)
+- 3.2.1 - Ensure dccp kernel module is not available
+- 3.2.2 - Ensure tipc kernel module is not available
+- 3.2.3 - Ensure rds kernel module is not available
+- 3.2.4 - Ensure sctp kernel module is not available
 
-#### 3.3 Network Parameters (Host and Router) (7 checks)
-- 3.3.1 - Ensure source routed packets are not accepted
-- 3.3.2 - Ensure ICMP redirects are not accepted
-- 3.3.3 - Ensure secure ICMP redirects are not accepted
-- 3.3.4 - Ensure suspicious packets are logged
-- 3.3.5 - Ensure broadcast ICMP requests are ignored
-- 3.3.6 - Ensure bogus ICMP responses are ignored
-- 3.3.7 - Ensure Reverse Path Filtering is enabled
-- 3.3.8 - Ensure TCP SYN Cookies is enabled
-- 3.3.9 - Ensure IPv6 router advertisements are not accepted
+#### 3.3 Configure Network Kernel Parameters (11 checks)
+- 3.3.1 - Ensure ip forwarding is disabled
+- 3.3.2 - Ensure packet redirect sending is disabled
+- 3.3.3 - Ensure bogus icmp responses are ignored
+- 3.3.4 - Ensure broadcast icmp requests are ignored
+- 3.3.5 - Ensure icmp redirects are not accepted
+- 3.3.6 - Ensure secure icmp redirects are not accepted
+- 3.3.7 - Ensure reverse path filtering is enabled
+- 3.3.8 - Ensure source routed packets are not accepted
+- 3.3.9 - Ensure suspicious packets are logged
+- 3.3.10 - Ensure tcp syn cookies is enabled
+- 3.3.11 - Ensure ipv6 router advertisements are not accepted
 
 ### Section 4: Firewall Configuration (11 checks)
 
