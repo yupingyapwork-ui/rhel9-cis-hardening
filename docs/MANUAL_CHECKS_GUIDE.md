@@ -11,7 +11,7 @@ The RHEL 9 CIS Compliance Tool automatically remediates most checks, but some re
 Manual checks are clearly marked with **[WARNING] MANUAL:** prefix:
 
 ```bash
-sudo ./rhel9-cis-compliance.sh --dry-run
+sudo ./rhel9-cis-compliance-modular.sh --dry-run
 
 # Output will show:
 [WARNING] [1.2.1.1] MANUAL: GPG keys need to be configured manually
@@ -41,13 +41,13 @@ Search the log file for all manual checks:
 
 ```bash
 # View all manual checks
-grep "MANUAL:" /var/log/cis-compliance/cis-compliance-*.log
+grep "MANUAL:" /var/cis-compliance/log/cis-compliance-*.log
 
 # Count manual checks
-grep -c "MANUAL:" /var/log/cis-compliance/cis-compliance-*.log
+grep -c "MANUAL:" /var/cis-compliance/log/cis-compliance-*.log
 
 # View manual checks with context
-grep -B2 -A2 "MANUAL:" /var/log/cis-compliance/cis-compliance-*.log
+grep -B2 -A2 "MANUAL:" /var/cis-compliance/log/cis-compliance-*.log
 ```
 
 ### 4. In the HTML Report
@@ -55,7 +55,7 @@ grep -B2 -A2 "MANUAL:" /var/log/cis-compliance/cis-compliance-*.log
 Open the HTML report in a browser:
 
 ```bash
-firefox /var/lib/cis-compliance/reports/compliance-report-*.html
+firefox /var/cis-compliance/reports/compliance-report-*.html
 ```
 
 Manual checks are highlighted in **orange/yellow** with "Manual Review Required" label.
@@ -63,7 +63,7 @@ Manual checks are highlighted in **orange/yellow** with "Manual Review Required"
 ### 5. In the Text Report
 
 ```bash
-cat /var/lib/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual Review"
+cat /var/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual Review"
 ```
 
 ## Common Manual Checks
@@ -97,7 +97,7 @@ cat /var/lib/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual R
   ```bash
   # Review available updates
   dnf check-update
-  
+
   # Apply updates in maintenance window
   dnf update -y
   ```
@@ -111,7 +111,7 @@ cat /var/lib/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual R
   # Set GRUB2 password
   grub2-setpassword
   # Enter password when prompted
-  
+
   # Verify
   grep "^GRUB2_PASSWORD" /boot/grub2/user.cfg
   ```
@@ -120,7 +120,7 @@ cat /var/lib/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual R
 
 **1.1.2.x.1 - Separate Partitions**
 - **Why Manual:** Cannot create partitions on running system
-- **Action Required:** 
+- **Action Required:**
   - Requires system reinstall or repartitioning
   - Plan during initial OS installation
   - Use LVM for flexibility
@@ -133,7 +133,7 @@ cat /var/lib/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual R
   ```bash
   # List unconfined services
   ps -eZ | grep unconfined_service_t
-  
+
   # Create custom policies as needed
   audit2allow -a -M custom_policy
   semodule -i custom_policy.pp
@@ -153,7 +153,7 @@ cat /var/lib/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual R
   ```bash
   # List all listening services
   ss -tulpn
-  
+
   # Disable unauthorized services
   systemctl disable <service-name>
   ```
@@ -166,7 +166,7 @@ cat /var/lib/cis-compliance/reports/compliance-report-*.txt | grep -A5 "Manual R
   ```bash
   # Review current rules
   firewall-cmd --list-all
-  
+
   # Remove unnecessary services
   firewall-cmd --permanent --remove-service=<service>
   firewall-cmd --reload
@@ -259,10 +259,10 @@ vi /etc/audit/auditd.conf
   ```bash
   # Find all SUID files
   find / -perm /4000 -type f 2>/dev/null
-  
+
   # Find all SGID files
   find / -perm /2000 -type f 2>/dev/null
-  
+
   # Review each file and remove SUID/SGID if not needed
   chmod u-s /path/to/file  # Remove SUID
   chmod g-s /path/to/file  # Remove SGID
@@ -273,14 +273,14 @@ vi /etc/audit/auditd.conf
 ### Step 1: Run Initial Assessment
 
 ```bash
-sudo ./rhel9-cis-compliance.sh --dry-run
+sudo ./rhel9-cis-compliance-modular.sh --dry-run
 ```
 
 ### Step 2: Extract Manual Checks List
 
 ```bash
 # Create a list of all manual checks
-grep "MANUAL:" /var/log/cis-compliance/cis-compliance-*.log > manual-checks.txt
+grep "MANUAL:" /var/cis-compliance/log/cis-compliance-*.log > manual-checks.txt
 
 # Review the list
 cat manual-checks.txt
@@ -309,7 +309,7 @@ Create a tracking spreadsheet:
 After addressing manual checks:
 
 ```bash
-sudo ./rhel9-cis-compliance.sh --dry-run
+sudo ./rhel9-cis-compliance-modular.sh --dry-run
 ```
 
 Verify the manual checks count decreases.
@@ -322,7 +322,7 @@ Verify the manual checks count decreases.
 #!/bin/bash
 # generate-manual-report.sh
 
-LOG_FILE=$(ls -t /var/log/cis-compliance/cis-compliance-*.log | head -1)
+LOG_FILE=$(ls -t /var/cis-compliance/log/cis-compliance-*.log | head -1)
 
 echo "Manual Checks Report"
 echo "===================="
@@ -345,7 +345,7 @@ echo "Total Manual Checks: $(grep -c "MANUAL:" "$LOG_FILE")"
 
 BASELINE_COUNT=30  # Initial manual checks count
 
-CURRENT_LOG=$(ls -t /var/log/cis-compliance/cis-compliance-*.log | head -1)
+CURRENT_LOG=$(ls -t /var/cis-compliance/log/cis-compliance-*.log | head -1)
 CURRENT_COUNT=$(grep -c "MANUAL:" "$CURRENT_LOG")
 
 echo "Manual Checks Progress"
@@ -417,6 +417,6 @@ Manual checks are an essential part of CIS compliance. The script clearly identi
 ---
 
 **For Questions:**
-- Review the log file: `/var/log/cis-compliance/cis-compliance-*.log`
-- Check the HTML report: `/var/lib/cis-compliance/reports/compliance-report-*.html`
+- Review the log file: `/var/cis-compliance/log/cis-compliance-*.log`
+- Check the HTML report: `/var/cis-compliance/reports/compliance-report-*.html`
 - Consult the CIS Benchmark PDF for detailed requirements

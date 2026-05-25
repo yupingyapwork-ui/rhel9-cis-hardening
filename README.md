@@ -49,7 +49,7 @@ chmod +x lib/*.sh
 sudo ./rhel9-cis-compliance-modular.sh --dry-run
 
 # 2. Review the HTML report
-firefox /var/lib/cis-compliance/reports/compliance-report-*.html
+firefox /var/cis-compliance/reports/compliance-report-*.html
 
 # 3. Apply fixes with confirmation for each change
 sudo ./rhel9-cis-compliance-modular.sh --interactive
@@ -88,11 +88,11 @@ RHEL9-CIS-Tool/
 │   ├── section-6.sh                   # ✅ Logging and Auditing (100 checks)
 │   └── section-7.sh                   # ✅ System Maintenance (22 checks)
 ├── docs/                              # Documentation
-│   ├── IMPLEMENTATION_STATUS.md       # Detailed implementation status
-│   └── MANUAL_CHECKS_GUIDE.md         # Manual intervention guide
+│   ├── CRITICAL_SETTINGS_PROTECTION.md # Critical change safeguards
+│   ├── MANUAL_CHECKS_GUIDE.md         # Manual intervention guide
+│   └── TECHNICAL_DOCUMENTATION.md     # Detailed logging and integration guide
 ├── banner-samples/                    # Custom banner templates
-├── checklist/                         # Deployment checklists
-└── sample-log/                        # Example outputs
+└── checklist/                         # Deployment checklists
 ```
 
 ---
@@ -106,7 +106,7 @@ RHEL9-CIS-Tool/
 - ✅ **Automated Remediation**: Apply fixes automatically or interactively
 - ✅ **Backup & Rollback**: Automatic backup of all modified files
 - ✅ **Section Selection**: Run specific sections or all sections
-- ✅ **Enhanced Logging**: Three separate logs (main, failed checks, manual checks) with detailed troubleshooting information
+- ✅ **Enhanced Logging**: Main, failed-check, and manual-check logs with CSV exports
 - ✅ **Professional Reports**: HTML and text compliance reports
 - ✅ **Custom Banners**: Support for organization-specific warning banners
 - ✅ **Manual Check Tracking**: Clear identification of site-policy checks
@@ -130,8 +130,8 @@ RHEL9-CIS-Tool/
 --sections         Select specific sections to remediate (interactive menu)
 --section=N        Remediate specific section (e.g., --section=1)
 --banner-file=PATH Custom banner text file for warning banners
---backup-only      Create backups without applying changes
---rollback         Restore from previous backup
+--backup-only      Create a baseline configuration backup without applying changes
+--rollback         Restore from the most recent rollback script
 --report           Generate compliance report only
 --help             Display help message
 ```
@@ -147,7 +147,7 @@ RHEL9-CIS-Tool/
 sudo ./rhel9-cis-compliance-modular.sh --dry-run
 
 # Step 2: Review the HTML report
-firefox /var/lib/cis-compliance/reports/compliance-report-*.html
+firefox /var/cis-compliance/reports/compliance-report-*.html
 
 # Step 3: Apply fixes interactively
 sudo ./rhel9-cis-compliance-modular.sh --interactive
@@ -375,7 +375,7 @@ The enhanced logging system addresses critical operational needs:
 - Get actionable remediation guidance
 - Track manual checks requiring attention
 
-**Solution**: Three specialized log files providing:
+**Solution**: Specialized log files and CSV exports providing:
 - **Troubleshooting**: Detailed failure analysis with current/expected states
 - **Remediation**: Exact commands to fix issues
 - **Compliance**: Documentation for manual checks and audit trails
@@ -469,22 +469,22 @@ REFERENCES:
 
 ```bash
 # View main execution log
-less /var/log/cis-compliance/cis-compliance-*.log
+less /var/cis-compliance/log/cis-compliance-*.log
 
 # View only failed checks with remediation guidance
-less /var/log/cis-compliance/failed-checks-*.log
+less /var/cis-compliance/log/failed-checks-*.log
 
 # View manual checks requiring your attention
-less /var/log/cis-compliance/manual-checks-*.log
+less /var/cis-compliance/log/manual-checks-*.log
 
 # Search for specific check
-grep "3.3.2" /var/log/cis-compliance/failed-checks-*.log
+grep "3.3.2" /var/cis-compliance/log/failed-checks-*.log
 
 # Count failed checks
-grep -c "STATUS: FAILED" /var/log/cis-compliance/failed-checks-*.log
+grep -c "STATUS: FAILED" /var/cis-compliance/log/failed-checks-*.log
 
 # Count manual checks
-grep -c "STATUS: REQUIRES MANUAL REVIEW" /var/log/cis-compliance/manual-checks-*.log
+grep -c "STATUS: REQUIRES MANUAL REVIEW" /var/cis-compliance/log/manual-checks-*.log
 ```
 
 #### Typical Workflow
@@ -496,7 +496,7 @@ grep -c "STATUS: REQUIRES MANUAL REVIEW" /var/log/cis-compliance/manual-checks-*
 
 2. **Review Failed Checks**:
    ```bash
-   less /var/log/cis-compliance/failed-checks-*.log
+   less /var/cis-compliance/log/failed-checks-*.log
    ```
    - Understand what failed and why
    - Note the remediation commands
@@ -504,7 +504,7 @@ grep -c "STATUS: REQUIRES MANUAL REVIEW" /var/log/cis-compliance/manual-checks-*
 
 3. **Review Manual Checks**:
    ```bash
-   less /var/log/cis-compliance/manual-checks-*.log
+   less /var/cis-compliance/log/manual-checks-*.log
    ```
    - Identify site-specific configurations needed
    - Follow verification steps
@@ -573,7 +573,7 @@ Output:
 3. **File Permissions**: Log files are created with default permissions. Consider:
    ```bash
    # Restrict access to logs (contain system configuration details)
-   chmod 600 /var/log/cis-compliance/*.log
+   chmod 600 /var/cis-compliance/log/*.log
    ```
 
 4. **Disk Space**: Three log files consume more space than one:
@@ -585,7 +585,7 @@ Output:
 5. **Log Rotation**: Consider implementing log rotation:
    ```bash
    # Keep only last 10 runs
-   cd /var/log/cis-compliance
+   cd /var/cis-compliance/log
    ls -t cis-compliance-*.log | tail -n +11 | xargs rm -f
    ls -t failed-checks-*.log | tail -n +11 | xargs rm -f
    ls -t manual-checks-*.log | tail -n +11 | xargs rm -f
@@ -598,26 +598,26 @@ Output:
 2. **Document Manual Check Decisions**: When implementing manual checks, document your decisions:
    ```bash
    # Add notes to manual checks log
-   echo "DECISION: Configured journald with SystemMaxUse=1G per policy" >> /var/log/cis-compliance/manual-checks-*.log
+   echo "DECISION: Configured journald with SystemMaxUse=1G per policy" >> /var/cis-compliance/log/manual-checks-*.log
    ```
 
 3. **Archive Logs for Compliance**: Keep logs as evidence of compliance efforts:
    ```bash
    # Archive logs with date
-   tar -czf compliance-logs-$(date +%Y%m%d).tar.gz /var/log/cis-compliance/
+   tar -czf compliance-logs-$(date +%Y%m%d).tar.gz /var/cis-compliance/log/
    ```
 
 4. **Use Logs for Trending**: Compare logs over time to track compliance improvements:
    ```bash
    # Compare failed check counts
-   grep -c "STATUS: FAILED" /var/log/cis-compliance/failed-checks-20260516*.log
-   grep -c "STATUS: FAILED" /var/log/cis-compliance/failed-checks-20260517*.log
+   grep -c "STATUS: FAILED" /var/cis-compliance/log/failed-checks-20260516*.log
+   grep -c "STATUS: FAILED" /var/cis-compliance/log/failed-checks-20260517*.log
    ```
 
 5. **Integrate with Monitoring**: Consider parsing logs for monitoring systems:
    ```bash
    # Extract failed check count for monitoring
-   FAILED_COUNT=$(grep -c "STATUS: FAILED" /var/log/cis-compliance/failed-checks-*.log)
+   FAILED_COUNT=$(grep -c "STATUS: FAILED" /var/cis-compliance/log/failed-checks-*.log)
    echo "cis_failed_checks ${FAILED_COUNT}" | nc monitoring-server 9091
    ```
 
@@ -634,11 +634,11 @@ Output:
 
 After execution, find reports and logs in:
 
-- **HTML Report**: `/var/lib/cis-compliance/reports/compliance-report-TIMESTAMP.html`
-- **Text Report**: `/var/lib/cis-compliance/reports/compliance-report-TIMESTAMP.txt`
-- **Log File**: `/var/log/cis-compliance/cis-compliance-TIMESTAMP.log`
-- **Backups**: `/var/lib/cis-compliance/backups/TIMESTAMP/`
-- **Rollback Script**: `/var/lib/cis-compliance/rollback/rollback-TIMESTAMP.sh`
+- **HTML Report**: `/var/cis-compliance/reports/compliance-report-TIMESTAMP.html`
+- **Text Report**: `/var/cis-compliance/reports/compliance-report-TIMESTAMP.txt`
+- **Log File**: `/var/cis-compliance/log/cis-compliance-TIMESTAMP.log`
+- **Backups**: `/var/cis-compliance/backups/TIMESTAMP/`
+- **Rollback Script**: `/var/cis-compliance/rollback/rollback-TIMESTAMP.sh`
 
 ### Understanding Output
 
@@ -844,23 +844,24 @@ cd /path/to/RHEL9-CIS-Tool
 df -h /var
 
 # Clean up old backups if needed
-sudo rm -rf /var/lib/cis-compliance/backups/OLD_TIMESTAMP
+sudo rm -rf /var/cis-compliance/backups/OLD_TIMESTAMP
 ```
 
 ### Check Logs
 ```bash
 # View latest log
-sudo tail -f /var/log/cis-compliance/cis-compliance-*.log
+sudo tail -f /var/cis-compliance/log/cis-compliance-*.log
 
 # Search for errors
-sudo grep ERROR /var/log/cis-compliance/cis-compliance-*.log
+sudo grep ERROR /var/cis-compliance/log/cis-compliance-*.log
 ```
 
 ---
 
 ## 📖 Documentation
 
-- **[Implementation Status](docs/IMPLEMENTATION_STATUS.md)** - Detailed check-by-check status
+- **[Technical Documentation](docs/TECHNICAL_DOCUMENTATION.md)** - Detailed logging and integration guide
+- **[Critical Settings Protection](docs/CRITICAL_SETTINGS_PROTECTION.md)** - Critical change safeguards
 - **[Manual Checks Guide](docs/MANUAL_CHECKS_GUIDE.md)** - Manual intervention required
 - **[Deployment Checklist](checklist/DEPLOYMENT_CHECKLIST.md)** - Pre/post deployment steps
 

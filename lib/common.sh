@@ -64,7 +64,7 @@ log_message() {
     shift
     local message="$*"
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
+
     echo "[${timestamp}] [${level}] ${message}" >> "${LOG_FILE}" 2>/dev/null || true
 }
 
@@ -82,18 +82,18 @@ log_warning() {
     local message="$*"
     log_message "WARNING" "${message}"
     echo -e "${YELLOW}[WARNING]${NC} ${message}"
-    
+
     # Auto-detect FAIL messages and log to failed checks log
     if [[ "${message}" =~ ^\[([0-9.]+)\]\ FAIL:\ (.+)$ ]]; then
         local check_id="${BASH_REMATCH[1]}"
         local failure_desc="${BASH_REMATCH[2]}"
-        
+
         # Extract current and expected values if present
         local current_state="${failure_desc}"
         local expected_state="See CIS Benchmark for expected configuration"
         local reason="Check failed during compliance assessment"
         local remediation="Run with --interactive or --auto mode to remediate"
-        
+
         # Try to parse "current = X (expected Y)" pattern
         if [[ "${failure_desc}" =~ (.+)\ =\ ([^\(]+)\ \(expected\ (.+)\)$ ]]; then
             local param="${BASH_REMATCH[1]}"
@@ -104,7 +104,7 @@ log_warning() {
             reason="Parameter ${param} is set to ${current_val} but should be ${expected_val}"
             remediation="Set ${param} to ${expected_val} in the appropriate configuration file"
         fi
-        
+
         # Log to failed checks file
         local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
         cat >> "${FAILED_LOG}" 2>/dev/null << EOF
@@ -152,12 +152,12 @@ log_check_failed() {
     local expected_state="$4"
     local reason="$5"
     local remediation_hint="${6:-Manual remediation required}"
-    
+
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
+
     # Log to main log file
     log_warning "[${check_id}] FAIL: ${check_title}"
-    
+
     # Log detailed information to failed checks log
     cat >> "${FAILED_LOG}" << EOF
 
@@ -191,7 +191,7 @@ EOF
     local csv_expected=$(echo "${expected_state}" | sed 's/"/""/g' | tr '\n' ' ')
     local csv_reason=$(echo "${reason}" | sed 's/"/""/g' | tr '\n' ' ')
     local csv_remediation=$(echo "${remediation_hint}" | sed 's/"/""/g' | tr '\n' ' ')
-    
+
     echo "\"${csv_check_id}\",\"${timestamp}\",\"FAILED\",\"${csv_title}\",\"${csv_current}\",\"${csv_expected}\",\"${csv_reason}\",\"${csv_remediation}\"" >> "${FAILED_CSV}"
 }
 
@@ -203,12 +203,12 @@ log_check_manual() {
     local required_action="$4"
     local verification_steps="$5"
     local additional_info="${6:-See CIS Benchmark documentation for details}"
-    
+
     local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-    
+
     # Log to main log file
     log_warning "[${check_id}] MANUAL: ${check_title}"
-    
+
     # Log detailed information to manual checks log
     cat >> "${MANUAL_LOG}" << EOF
 
@@ -248,7 +248,7 @@ EOF
     local csv_verification=$(echo "${verification_steps}" | sed 's/"/""/g' | tr '\n' ' ')
     local csv_info=$(echo "${additional_info}" | sed 's/"/""/g' | tr '\n' ' ')
     local section="${check_id%%.*}"
-    
+
     echo "\"${csv_check_id}\",\"${timestamp}\",\"MANUAL\",\"${csv_title}\",\"${csv_current}\",\"${csv_action}\",\"${csv_verification}\",\"${csv_info}\",\"${section}\"" >> "${MANUAL_CSV}"
 }
 
@@ -295,7 +295,7 @@ EOF
     cat > "${MANUAL_CSV}" << 'EOF'
 "Check ID","Timestamp","Status","Title","Current State","Required Action","Verification Steps","Additional Information","Section"
 EOF
-    
+
     log_info "Detailed log files initialized:"
     log_info "  - Failed checks: ${FAILED_LOG}"
     log_info "  - Failed checks CSV: ${FAILED_CSV}"
@@ -332,8 +332,8 @@ Options:
   --sections         Select specific sections to remediate (interactive menu)
   --section=N        Remediate specific section (e.g., --section=1 or --section=1.1)
   --banner-file=PATH Custom banner text file for warning banners
-  --backup-only      Create backups without applying changes
-  --rollback         Restore from previous backup
+  --backup-only      Create a baseline configuration backup without applying changes
+  --rollback         Restore from the most recent rollback script
   --report           Generate compliance report only
   --help             Display this help message
 
@@ -344,7 +344,8 @@ Examples:
   ${SCRIPT_NAME} --sections --auto      # Select sections interactively
   ${SCRIPT_NAME} --section=1 --auto     # Apply only Section 1 fixes
   ${SCRIPT_NAME} --section=1.1 --auto   # Apply only Section 1.1 fixes
-  ${SCRIPT_NAME} --rollback             # Restore previous configuration
+  ${SCRIPT_NAME} --backup-only          # Create a baseline configuration backup
+  ${SCRIPT_NAME} --rollback             # Restore from the most recent rollback script
 
 EOF
 }
@@ -383,10 +384,10 @@ Examples:
   1.1 1.7   - Run Sections 1.1 and 1.7
 
 EOF
-    
+
     read -p "Enter your selection: " selection
     echo
-    
+
     if [[ "${selection}" == "all" ]]; then
         SELECTED_SECTIONS=("all")
         log_info "Selected: All sections"
@@ -398,12 +399,12 @@ EOF
 
 should_run_section() {
     local section="$1"
-    
+
     # If no sections selected or "all" selected, run everything
     if [[ ${#SELECTED_SECTIONS[@]} -eq 0 ]] || [[ "${SELECTED_SECTIONS[*]}" == "all" ]]; then
         return 0
     fi
-    
+
     # Check if this section should run
     for selected in "${SELECTED_SECTIONS[@]}"; do
         # Exact match (e.g., "1.1" matches "1.1")
@@ -419,14 +420,14 @@ should_run_section() {
             return 0
         fi
     done
-    
+
     return 1
 }
 
 confirm_action() {
     local prompt="$1"
     local response
-    
+
     if [[ "${INTERACTIVE}" == true ]]; then
         read -p "${prompt} (y/n): " -n 1 -r response
         echo
@@ -441,7 +442,7 @@ confirm_critical_action() {
     local prompt="$1"
     local warning="$2"
     local response
-    
+
     # ALWAYS require manual confirmation for critical changes, even in --auto mode
     echo ""
     echo "╔════════════════════════════════════════════════════════════════════════════╗"
@@ -457,9 +458,9 @@ confirm_critical_action() {
 
 create_directories() {
     log_info "Creating required directories..."
-    
+
     mkdir -p "${BACKUP_DIR}" "${LOG_DIR}" "${REPORT_DIR}" "${ROLLBACK_DIR}" 2>/dev/null || true
-    
+
     if [[ $? -eq 0 ]]; then
         log_success "Directories created successfully"
         return 0
@@ -469,27 +470,103 @@ create_directories() {
     fi
 }
 
+create_backup_only_archive() {
+    local archive="${BACKUP_DIR}/baseline-config-${TIMESTAMP}.tar.gz"
+    local paths=()
+    local path
+
+    for path in /etc /boot/grub2 /boot/loader/entries; do
+        if [[ -e "${path}" ]]; then
+            paths+=("${path}")
+        fi
+    done
+
+    if [[ ${#paths[@]} -eq 0 ]]; then
+        log_error "No baseline configuration paths found to back up"
+        return 1
+    fi
+
+    log_info "Creating baseline configuration backup archive..."
+    if tar -czpf "${archive}" --ignore-failed-read "${paths[@]}" >> "${LOG_FILE}" 2>&1; then
+        log_success "Baseline configuration backup created: ${archive}"
+        return 0
+    fi
+
+    log_error "Failed to create baseline configuration backup: ${archive}"
+    return 1
+}
+
 backup_file() {
     local file="$1"
     local backup_path="${BACKUP_DIR}${file}"
-    
+
+    if [[ -e "${backup_path}" ]]; then
+        log_debug "Backup already exists, preserving original snapshot: ${file}"
+        return 0
+    fi
+
     if [[ -f "${file}" ]]; then
         mkdir -p "$(dirname "${backup_path}")" 2>/dev/null
         cp -p "${file}" "${backup_path}" 2>/dev/null
         log_debug "Backed up: ${file}"
-        
+
         # Add to rollback script
+        echo "mkdir -p '$(dirname "${file}")'" >> "${ROLLBACK_SCRIPT}"
         echo "cp -p '${backup_path}' '${file}'" >> "${ROLLBACK_SCRIPT}"
         return 0
     elif [[ -d "${file}" ]]; then
         mkdir -p "$(dirname "${backup_path}")" 2>/dev/null
         cp -rp "${file}" "${backup_path}" 2>/dev/null
         log_debug "Backed up directory: ${file}"
+
+        # Add to rollback script
+        echo "rm -rf '${file}'" >> "${ROLLBACK_SCRIPT}"
+        echo "mkdir -p '$(dirname "${file}")'" >> "${ROLLBACK_SCRIPT}"
+        echo "cp -a '${backup_path}' '${file}'" >> "${ROLLBACK_SCRIPT}"
         return 0
     else
-        log_debug "File does not exist, skipping backup: ${file}"
+        mkdir -p "$(dirname "${backup_path}")" 2>/dev/null
+        log_debug "File does not exist, recording rollback removal: ${file}"
+        echo "rm -rf '${file}'" >> "${ROLLBACK_SCRIPT}"
         return 1
     fi
+}
+
+perform_rollback() {
+    local rollback_script
+    local candidate
+    local response
+
+    while IFS= read -r candidate; do
+        candidate="${candidate#* }"
+        if grep -Eq "^(cp -p|cp -a|rm -rf|mkdir -p) " "${candidate}" 2>/dev/null; then
+            rollback_script="${candidate}"
+            break
+        fi
+    done < <(find "${ROLLBACK_DIR}" -maxdepth 1 -type f -name 'rollback-*.sh' -printf '%T@ %p\n' 2>/dev/null | sort -nr)
+
+    if [[ -z "${rollback_script}" ]]; then
+        log_error "No rollback script found in ${ROLLBACK_DIR}"
+        return 1
+    fi
+
+    log_warning "Rollback will execute: ${rollback_script}"
+
+    if [[ "${AUTO_MODE}" != true ]]; then
+        read -p "Type 'yes' to continue with rollback: " -r response
+        if [[ "${response}" != "yes" ]]; then
+            log_info "Rollback cancelled"
+            return 0
+        fi
+    fi
+
+    if bash "${rollback_script}" >> "${LOG_FILE}" 2>&1; then
+        log_success "Rollback completed successfully"
+        return 0
+    fi
+
+    log_error "Rollback failed. Review ${LOG_FILE} for details."
+    return 1
 }
 
 ################################################################################
@@ -519,7 +596,7 @@ check_rhel9() {
 check_disk_space() {
     local required_space=1048576  # 1GB in KB
     local available_space=$(df /var | tail -1 | awk '{print $4}')
-    
+
     if [[ ${available_space} -lt ${required_space} ]]; then
         log_error "Insufficient disk space in /var (need 1GB, have $(( available_space / 1024 ))MB)"
         exit 1
@@ -533,15 +610,15 @@ pre_execution_validation() {
     check_rhel9
     check_disk_space
     create_directories
-    
+
     # Initialize rollback script
     echo "#!/bin/bash" > "${ROLLBACK_SCRIPT}"
     echo "# Rollback script generated on $(date)" >> "${ROLLBACK_SCRIPT}"
     chmod +x "${ROLLBACK_SCRIPT}"
-    
+
     # Initialize detailed log files
     initialize_detailed_logs
-    
+
     log_success "Pre-execution validation completed"
 }
 
@@ -550,6 +627,11 @@ pre_execution_validation() {
 ################################################################################
 
 generate_html_report() {
+    local compliance_rate="N/A"
+    if [[ ${TOTAL_CHECKS} -gt 0 ]]; then
+        compliance_rate="$(( PASSED_CHECKS * 100 / TOTAL_CHECKS ))%"
+    fi
+
     cat > "${REPORT_FILE}" << EOF
 <!DOCTYPE html>
 <html>
@@ -573,6 +655,7 @@ generate_html_report() {
         <p class="fail">Failed: ${FAILED_CHECKS}</p>
         <p>Remediated: ${REMEDIATED_CHECKS}</p>
         <p class="manual">Manual Review Required: ${MANUAL_CHECKS}</p>
+        <p>Compliance Rate: ${compliance_rate}</p>
     </div>
     <p>Generated: $(date)</p>
 </body>
@@ -582,6 +665,11 @@ EOF
 }
 
 generate_text_report() {
+    local compliance_rate="N/A"
+    if [[ ${TOTAL_CHECKS} -gt 0 ]]; then
+        compliance_rate="$(( PASSED_CHECKS * 100 / TOTAL_CHECKS ))%"
+    fi
+
     cat > "${REPORT_TEXT}" << EOF
 RHEL 9 CIS Benchmark Compliance Report
 Generated: $(date)
@@ -594,9 +682,9 @@ Failed Checks:          ${FAILED_CHECKS}
 Remediated Checks:      ${REMEDIATED_CHECKS}
 Manual Review Required: ${MANUAL_CHECKS}
 
-Compliance Rate: $(( PASSED_CHECKS * 100 / TOTAL_CHECKS ))%
+Compliance Rate: ${compliance_rate}
 EOF
     log_info "Text report generated: ${REPORT_TEXT}"
 }
 
-# Made with Bob
+

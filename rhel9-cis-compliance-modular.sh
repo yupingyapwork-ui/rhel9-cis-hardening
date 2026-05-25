@@ -16,8 +16,8 @@
 #   --sections         Select specific sections to remediate (interactive menu)
 #   --section=N        Remediate specific section (e.g., --section=1 or --section=1.1)
 #   --banner-file=PATH Custom banner text file for warning banners
-#   --backup-only      Create backups without applying changes
-#   --rollback         Restore from previous backup
+#   --backup-only      Create a baseline configuration backup without applying changes
+#   --rollback         Restore from the most recent rollback script
 #   --report           Generate compliance report only
 #   --help             Display this help message
 #
@@ -125,19 +125,28 @@ main() {
                 ;;
         esac
     done
-    
+
     # Print banner
     print_banner
-    
+
+    # Rollback should not create a new rollback script before selecting the
+    # previous one to execute.
+    if [[ "${ROLLBACK_MODE}" == true ]]; then
+        mkdir -p "${LOG_DIR}" "${ROLLBACK_DIR}" 2>/dev/null || true
+        check_root
+        perform_rollback
+        exit $?
+    fi
+
     # Perform pre-execution validation
     pre_execution_validation
-    
-    # Handle rollback mode
-    if [[ "${ROLLBACK_MODE}" == true ]]; then
-        log_info "Rollback functionality not yet implemented"
-        exit 0
+
+    # Handle backup-only mode
+    if [[ "${BACKUP_ONLY}" == true ]]; then
+        create_backup_only_archive
+        exit $?
     fi
-    
+
     # Handle report-only mode
     if [[ "${REPORT_ONLY}" == true ]]; then
         generate_html_report
@@ -145,18 +154,18 @@ main() {
         log_info "Reports generated successfully"
         exit 0
     fi
-    
+
     # Show section selection menu if requested
     if [[ "${SECTION_SELECT}" == true ]]; then
         show_section_menu
     fi
-    
+
     # Set default mode if none specified
     if [[ "${DRY_RUN}" == false ]] && [[ "${INTERACTIVE}" == false ]] && [[ "${AUTO_MODE}" == false ]]; then
         log_warning "No execution mode specified. Using --dry-run mode by default."
         DRY_RUN=true
     fi
-    
+
     # Display execution mode
     if [[ "${DRY_RUN}" == true ]]; then
         log_info "Running in DRY-RUN mode - no changes will be made"
@@ -166,27 +175,27 @@ main() {
         log_warning "Running in AUTOMATED mode - all changes will be applied automatically"
         sleep 3
     fi
-    
+
     # Display selected sections
     if [[ ${#SELECTED_SECTIONS[@]} -gt 0 ]]; then
         log_info "Selected sections: ${SELECTED_SECTIONS[*]}"
     else
         log_info "Running all sections"
     fi
-    
+
     echo
     log_info "Starting CIS Benchmark compliance assessment..."
     echo
-    
+
     # Run all remediations
     run_all_remediations
-    
+
     # Generate reports
     echo
     log_info "Generating compliance reports..."
     generate_html_report
     generate_text_report
-    
+
     # Display summary
     echo
     log_info "================================================================================"
@@ -198,33 +207,33 @@ main() {
     log_info "Remediated Checks:      ${REMEDIATED_CHECKS}"
     log_info "Manual Review Required: ${MANUAL_CHECKS}"
     log_info "================================================================================"
-    
+
     if [[ ${REMEDIATED_CHECKS} -gt 0 ]]; then
         log_info ""
         log_warning "IMPORTANT: ${REMEDIATED_CHECKS} remediations were applied."
         log_warning "A system reboot may be required for some changes to take effect."
         log_warning "Rollback script available at: ${ROLLBACK_SCRIPT}"
     fi
-    
+
     if [[ ${MANUAL_CHECKS} -gt 0 ]]; then
         log_info ""
         log_warning "ATTENTION: ${MANUAL_CHECKS} items require manual intervention."
         log_warning "Please review the log file for details: ${LOG_FILE}"
     fi
-    
+
     log_info ""
     log_info "Reports generated:"
     log_info "  - HTML Report: ${REPORT_FILE}"
     log_info "  - Text Report: ${REPORT_TEXT}"
     log_info "  - Log File:    ${LOG_FILE}"
     log_info ""
-    
+
     log_success "CIS Benchmark compliance assessment completed successfully!"
-    
+
     exit 0
 }
 
 # Execute main function
 main "$@"
 
-# Made with Bob
+

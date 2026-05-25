@@ -330,4 +330,4 @@ run_section_4() {
     remediate_nftables
 }
 
-# Made with Bob
+

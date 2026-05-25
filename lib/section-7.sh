@@ -470,4 +470,4 @@ run_section_7() {
     remediate_user_group_settings
 }
 
-# Made with Bob
+

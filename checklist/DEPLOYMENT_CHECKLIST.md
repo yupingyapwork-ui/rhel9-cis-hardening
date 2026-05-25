@@ -27,19 +27,19 @@
 ### Script Preparation
 - [ ] Copy script to target system
   ```bash
-  scp rhel9-cis-compliance.sh root@target-server:/root/
+  scp rhel9-cis-compliance-modular.sh root@target-server:/root/
   ```
 - [ ] Verify script integrity (optional)
   ```bash
-  sha256sum rhel9-cis-compliance.sh
+  sha256sum rhel9-cis-compliance-modular.sh
   ```
 - [ ] Make script executable
   ```bash
-  chmod +x /root/rhel9-cis-compliance.sh
+  chmod +x /root/rhel9-cis-compliance-modular.sh
   ```
 - [ ] Copy documentation files
   ```bash
-  scp README.md QUICKSTART.md EXAMPLES.md root@target-server:/root/
+  scp README.md docs/*.md checklist/*.md root@target-server:/root/
   ```
 
 ### Testing Environment
@@ -53,23 +53,23 @@
 ### Dry-Run Assessment
 - [ ] Run initial dry-run assessment
   ```bash
-  ./rhel9-cis-compliance.sh --dry-run
+  ./rhel9-cis-compliance-modular.sh --dry-run
   ```
 - [ ] Review generated reports
   ```bash
-  cat /var/lib/cis-compliance/reports/compliance-report-*.txt
+  cat /var/cis-compliance/reports/compliance-report-*.txt
   ```
 - [ ] Review detailed log file
   ```bash
-  less /var/log/cis-compliance/cis-compliance-*.log
+  less /var/cis-compliance/log/cis-compliance-*.log
   ```
 - [ ] Document baseline compliance score
   ```bash
-  grep "Compliance Score" /var/lib/cis-compliance/reports/compliance-report-*.txt
+  grep "Compliance Rate" /var/cis-compliance/reports/compliance-report-*.txt
   ```
 - [ ] Identify manual intervention items
   ```bash
-  grep "MANUAL" /var/log/cis-compliance/cis-compliance-*.log
+  grep "MANUAL" /var/cis-compliance/log/cis-compliance-*.log
   ```
 
 ### Risk Assessment
@@ -85,7 +85,7 @@
 ### Apply Changes in Test
 - [ ] Run compliance tool in test environment
   ```bash
-  ./rhel9-cis-compliance.sh --interactive
+  ./rhel9-cis-compliance-modular.sh --interactive
   ```
 - [ ] Verify all services start correctly
   ```bash
@@ -101,13 +101,13 @@
 ### Test Validation
 - [ ] Run post-change assessment
   ```bash
-  ./rhel9-cis-compliance.sh --dry-run
+  ./rhel9-cis-compliance-modular.sh --dry-run
   ```
 - [ ] Compare before/after compliance scores
 - [ ] Document any issues encountered
 - [ ] Test rollback procedure
   ```bash
-  ./rhel9-cis-compliance.sh --rollback
+  ./rhel9-cis-compliance-modular.sh --rollback
   ```
 - [ ] Verify rollback success
 - [ ] Document lessons learned
@@ -163,25 +163,25 @@
 ### Deployment Steps
 - [ ] Run final dry-run assessment
   ```bash
-  ./rhel9-cis-compliance.sh --dry-run
+  ./rhel9-cis-compliance-modular.sh --dry-run
   ```
 - [ ] Review and confirm changes
 - [ ] Execute compliance tool
   ```bash
-  ./rhel9-cis-compliance.sh --interactive  # or --auto
+  ./rhel9-cis-compliance-modular.sh --interactive  # or --auto
   ```
 - [ ] Monitor execution progress
 - [ ] Document any errors or warnings
 - [ ] Save rollback script location
   ```bash
-  ls -l /var/lib/cis-compliance/rollback/
+  ls -l /var/cis-compliance/rollback/
   ```
 
 ### Post-Deployment Verification
 - [ ] Verify script completion
 - [ ] Check for errors in log
   ```bash
-  grep "ERROR" /var/log/cis-compliance/cis-compliance-*.log
+  grep "ERROR" /var/cis-compliance/log/cis-compliance-*.log
   ```
 - [ ] Verify all services running
   ```bash
@@ -197,14 +197,14 @@
 ### Compliance Verification
 - [ ] Run post-deployment assessment
   ```bash
-  ./rhel9-cis-compliance.sh --dry-run
+  ./rhel9-cis-compliance-modular.sh --dry-run
   ```
 - [ ] Review compliance score improvement
 - [ ] Verify remediated controls
 - [ ] Document remaining issues
 - [ ] Generate final reports
   ```bash
-  ./rhel9-cis-compliance.sh --report
+  ./rhel9-cis-compliance-modular.sh --report
   ```
 
 ## Post-Deployment Tasks
@@ -255,7 +255,7 @@
 - [ ] Notify stakeholders of rollback
 - [ ] Execute rollback script
   ```bash
-  ./rhel9-cis-compliance.sh --rollback
+  ./rhel9-cis-compliance-modular.sh --rollback
   ```
 - [ ] Verify service restoration
 - [ ] Test critical applications
@@ -269,7 +269,7 @@
 - [ ] Schedule weekly compliance checks
   ```bash
   # Add to crontab
-  0 2 * * 0 /root/rhel9-cis-compliance.sh --dry-run
+  0 2 * * 0 /root/rhel9-cis-compliance-modular.sh --dry-run
   ```
 - [ ] Review compliance reports monthly
 - [ ] Update documentation quarterly
@@ -320,12 +320,12 @@
 
 | Item | Location |
 |------|----------|
-| Compliance Script | `/root/rhel9-cis-compliance.sh` |
+| Compliance Script | `/root/rhel9-cis-compliance-modular.sh` |
 | Documentation | `/root/README.md` |
-| Logs | `/var/log/cis-compliance/` |
-| Reports | `/var/lib/cis-compliance/reports/` |
-| Backups | `/var/lib/cis-compliance/backups/` |
-| Rollback Scripts | `/var/lib/cis-compliance/rollback/` |
+| Logs | `/var/cis-compliance/log/` |
+| Reports | `/var/cis-compliance/reports/` |
+| Backups | `/var/cis-compliance/backups/` |
+| Rollback Scripts | `/var/cis-compliance/rollback/` |
 | System Backup | `/backup/` |
 
 ## Notes and Comments
