@@ -369,7 +369,7 @@ Select sections to remediate (space-separated numbers, or 'all'):
     1.7  - Warning Banners (6 checks)
     1.8  - GNOME Display Manager (10 checks)
 
-  SECTION 2: Services (30 checks)
+  SECTION 2: Services (39 checks)
   SECTION 3: Network Configuration (15 checks)
   SECTION 4: Firewall Configuration (7 checks)
   SECTION 5: Access, Authentication and Authorization (150 checks)
@@ -686,5 +686,4 @@ Compliance Rate: ${compliance_rate}
 EOF
     log_info "Text report generated: ${REPORT_TEXT}"
 }
-
 

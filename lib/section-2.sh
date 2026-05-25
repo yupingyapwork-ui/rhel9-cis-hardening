@@ -296,7 +296,7 @@ remediate_2_1_17() { disable_service squid true; remove_package squid; }
 audit_2_1_18() { ( package_not_installed httpd || service_not_active_or_enabled httpd ) && ( package_not_installed nginx || service_not_active_or_enabled nginx ); }
 remediate_2_1_18() { disable_service httpd true; disable_service nginx true; remove_package httpd; remove_package nginx; }
 
-audit_2_1_19() { package_not_installed xinetd && service_not_active_or_enabled xinetd; }
+audit_2_1_19() { package_not_installed xinetd || service_not_active_or_enabled xinetd; }
 remediate_2_1_19() { disable_service xinetd true; remove_package xinetd; }
 
 audit_2_1_20() {
@@ -461,21 +461,20 @@ remediate_2_4_8() {
 }
 
 audit_2_4_9() {
+    package_not_installed at && return 0
     [[ ! -f /etc/at.deny ]] && [[ -f /etc/at.allow ]] && check_path_owner_mode /etc/at.allow root root 640
 }
 remediate_2_4_9() {
+    if package_not_installed at; then
+        log_info "at is not installed; skipping at access restriction"
+        return 0
+    fi
+
     backup_file /etc/at.deny 2>/dev/null || true
     rm -f /etc/at.deny
     [[ -f /etc/at.allow ]] || touch /etc/at.allow
     fix_path_owner_mode /etc/at.allow root root 640
     log_warning "Populate /etc/at.allow with authorized users"
-}
-
-audit_2_4_10() {
-    [[ ! -f /etc/anacrontab ]] || check_path_owner_mode /etc/anacrontab root root 600
-}
-remediate_2_4_10() {
-    [[ -f /etc/anacrontab ]] && fix_path_owner_mode /etc/anacrontab root root 600 || true
 }
 
 ################################################################################
@@ -527,16 +526,15 @@ run_section_2() {
     run_section_2_check "2.3.3" "Ensure chrony is not run as the root user" audit_2_3_3 remediate_2_3_3
 
     log_info "--- 2.4 Configure Job Schedulers ---"
-    run_section_2_check "2.4.1" "Ensure cron daemon is enabled and active" audit_2_4_1 remediate_2_4_1
-    run_section_2_check "2.4.2" "Ensure permissions on /etc/crontab are configured" audit_2_4_2 remediate_2_4_2
-    run_section_2_check "2.4.3" "Ensure permissions on /etc/cron.hourly are configured" audit_2_4_3 remediate_2_4_3
-    run_section_2_check "2.4.4" "Ensure permissions on /etc/cron.daily are configured" audit_2_4_4 remediate_2_4_4
-    run_section_2_check "2.4.5" "Ensure permissions on /etc/cron.weekly are configured" audit_2_4_5 remediate_2_4_5
-    run_section_2_check "2.4.6" "Ensure permissions on /etc/cron.monthly are configured" audit_2_4_6 remediate_2_4_6
-    run_section_2_check "2.4.7" "Ensure permissions on /etc/cron.d are configured" audit_2_4_7 remediate_2_4_7
-    run_section_2_check "2.4.8" "Ensure cron is restricted to authorized users" audit_2_4_8 remediate_2_4_8
+    run_section_2_check "2.4.1.1" "Ensure cron daemon is enabled and active" audit_2_4_1 remediate_2_4_1
+    run_section_2_check "2.4.1.2" "Ensure permissions on /etc/crontab are configured" audit_2_4_2 remediate_2_4_2
+    run_section_2_check "2.4.1.3" "Ensure permissions on /etc/cron.hourly are configured" audit_2_4_3 remediate_2_4_3
+    run_section_2_check "2.4.1.4" "Ensure permissions on /etc/cron.daily are configured" audit_2_4_4 remediate_2_4_4
+    run_section_2_check "2.4.1.5" "Ensure permissions on /etc/cron.weekly are configured" audit_2_4_5 remediate_2_4_5
+    run_section_2_check "2.4.1.6" "Ensure permissions on /etc/cron.monthly are configured" audit_2_4_6 remediate_2_4_6
+    run_section_2_check "2.4.1.7" "Ensure permissions on /etc/cron.d are configured" audit_2_4_7 remediate_2_4_7
+    run_section_2_check "2.4.1.8" "Ensure crontab is restricted to authorized users" audit_2_4_8 remediate_2_4_8
     run_section_2_check "2.4.2.1" "Ensure at is restricted to authorized users" audit_2_4_9 remediate_2_4_9
-    run_section_2_check "2.4.10" "Ensure permissions on /etc/anacrontab are configured" audit_2_4_10 remediate_2_4_10
 
     log_info "=== Section 2: Services complete ==="
 }

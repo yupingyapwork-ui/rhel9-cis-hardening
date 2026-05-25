@@ -16,7 +16,7 @@
 
 This document provides comprehensive technical documentation for the RHEL 9 CIS Benchmark Automated Compliance Tool v2.0.0, including complete implementation status and advanced logging capabilities.
 
-**Current Status**: ✅ **100% Complete** - All 329 checks implemented
+**Current Status**: ✅ **Complete** - 328 checks covered
 
 The tool provides:
 - Automated compliance checking against CIS RHEL 9 Benchmark v2.0.0
@@ -35,13 +35,13 @@ The tool provides:
 | Section | Description | Checks | Status |
 |---------|-------------|--------|--------|
 | 1 | Initial Setup | 72 | ✅ Complete |
-| 2 | Services | 40 | ✅ Complete |
+| 2 | Services | 39 | ✅ Complete |
 | 3 | Network Configuration | 13 | ✅ Complete |
 | 4 | Firewall Configuration | 11 | ✅ Complete |
 | 5 | Access Control | 71 | ✅ Complete |
 | 6 | Logging and Auditing | 100 | ✅ Complete |
 | 7 | System Maintenance | 22 | ✅ Complete |
-| **TOTAL** | | **329** | **✅ 100%** |
+| **TOTAL** | | **328** | **✅ Complete** |
 
 ### Section 1: Initial Setup (72 checks)
 
@@ -123,7 +123,7 @@ The tool provides:
 - 1.8.9 - Ensure GDM autorun-never is not overridden
 - 1.8.10 - Ensure XDMCP is not enabled
 
-### Section 2: Services (40 checks)
+### Section 2: Services (39 checks)
 
 #### 2.1 Configure Server Services (22 checks)
 - 2.1.1-2.1.20 - Service removal/disablement checks
@@ -142,12 +142,11 @@ The tool provides:
 - 2.3.2 - Ensure chrony is configured with authorized timeserver
 - 2.3.3 - Ensure chrony is not run as the root user
 
-#### 2.4 Configure Job Schedulers (10 checks)
-- 2.4.1 - Ensure cron daemon is enabled and active
-- 2.4.2-2.4.7 - Cron directory permissions
-- 2.4.8 - Ensure cron is restricted to authorized users
+#### 2.4 Configure Job Schedulers (9 checks)
+- 2.4.1.1 - Ensure cron daemon is enabled and active
+- 2.4.1.2-2.4.1.7 - Cron directory permissions
+- 2.4.1.8 - Ensure crontab is restricted to authorized users
 - 2.4.2.1 - Ensure at is restricted to authorized users
-- 2.4.10 - Ensure permissions on /etc/anacrontab are configured
 
 ### Section 3: Network Configuration (13 checks)
 

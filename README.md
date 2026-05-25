@@ -6,12 +6,12 @@ A comprehensive, production-ready automated compliance tool for configuring Red 
 
 ## 🎯 Implementation Status
 
-**✅ 100% Complete - All 329 CIS Checks Implemented**
+**✅ Complete - 328 CIS Checks Covered**
 
 | Section | Description | Checks | Status |
 |---------|-------------|--------|--------|
 | 1 | Initial Setup | 72 | ✅ Complete |
-| 2 | Services | 40 | ✅ Complete |
+| 2 | Services | 39 | ✅ Complete |
 | 3 | Network Configuration | 13 | ✅ Complete |
 | 4 | Firewall Configuration | 11 | ✅ Complete |
 | 5 | Access Control | 71 | ✅ Complete |
@@ -81,7 +81,7 @@ RHEL9-CIS-Tool/
 ├── lib/                               # Modular section libraries
 │   ├── common.sh                      # Shared functions & utilities
 │   ├── section-1.sh                   # ✅ Initial Setup (72 checks)
-│   ├── section-2.sh                   # ✅ Services (40 checks)
+│   ├── section-2.sh                   # ✅ Services (39 checks)
 │   ├── section-3.sh                   # ✅ Network Configuration (13 checks)
 │   ├── section-4.sh                   # ✅ Firewall Configuration (11 checks)
 │   ├── section-5.sh                   # ✅ Access Control (71 checks)
@@ -101,7 +101,7 @@ RHEL9-CIS-Tool/
 
 ### Core Capabilities
 
-- ✅ **Complete CIS Coverage**: All 329 checks across 7 sections
+- ✅ **Complete CIS Coverage**: 328 checks across 7 sections
 - ✅ **Compliance Checking**: Dry-run mode to assess current state
 - ✅ **Automated Remediation**: Apply fixes automatically or interactively
 - ✅ **Backup & Rollback**: Automatic backup of all modified files
@@ -551,7 +551,7 @@ Output:
 
 #### Backward Compatibility
 - Existing [`log_warning()`](lib/common.sh:77), [`log_error()`](lib/common.sh:173), [`log_success()`](lib/common.sh:72) functions unchanged
-- All 329 checks across 7 sections work without modification
+- All 328 checks across 7 sections work without modification
 - Enhanced logging is additive, not disruptive
 
 #### Performance
@@ -655,7 +655,7 @@ After execution, find reports and logs in:
 ===============================================================================
 CIS BENCHMARK COMPLIANCE ASSESSMENT SUMMARY
 ===============================================================================
-Total Checks:           329
+Total Checks:           328
 Passed Checks:          250
 Failed Checks:          79
 Remediated Checks:      75
@@ -692,7 +692,7 @@ Each section implements specific CIS Benchmark controls:
 - **Section 1** - Initial Setup (72 checks)
   - Filesystem configuration, software updates, SELinux, secure boot, process hardening, crypto policy, warning banners, GDM
 
-- **Section 2** - Services (40 checks)
+- **Section 2** - Services (39 checks)
   - Server services, client services, time synchronization, job schedulers
 
 - **Section 3** - Network Configuration (13 checks)
@@ -882,7 +882,7 @@ When contributing:
 ## 📝 Version History
 
 - **v2.0.0** (2026-05-16): Complete implementation
-  - ✅ All 329 CIS checks implemented (100%)
+  - ✅ 328 CIS checks covered
   - ✅ Sections 1-7 fully functional
   - ✅ Comprehensive documentation
   - ✅ Production-ready modular architecture
