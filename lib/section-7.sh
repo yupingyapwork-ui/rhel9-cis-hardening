@@ -82,87 +82,79 @@ remediate_system_file_permissions() {
     # 7.1.10 - Ensure permissions on /etc/security/opasswd are configured
     check_file_permissions "/etc/security/opasswd" "600" "7.1.10"
     
-    # 7.1.11 - Ensure world writable files are secured
+    # 7.1.11 - Ensure world writable files and directories are secured
     local control_id="7.1.11"
-    log_info "[${control_id}] Ensure world writable files are secured"
+    log_info "[${control_id}] Ensure world writable files and directories are secured"
     ((TOTAL_CHECKS++))
-    
-    local world_writable=$(find / -xdev -type f -perm -0002 2>/dev/null | head -20)
-    local ww_count=$(find / -xdev -type f -perm -0002 2>/dev/null | wc -l)
-    log_check_manual "${control_id}" \
-        "Review and secure world-writable files" \
-        "Found ${ww_count} world-writable file(s) (showing first 20):
-${world_writable:-No world-writable files found}" \
-        "Review and remove world-writable permissions from files" \
-        "1. Find all world-writable files: find / -xdev -type f -perm -0002
-2. Review each file to determine if world-write is necessary
-3. Remove world-write permission: chmod o-w <file>
-4. Consider using sticky bit for shared directories: chmod +t <directory>
-5. Document any exceptions in security policy" \
-        "World-writable files can be modified by any user, posing a security risk"
-    ((MANUAL_CHECKS++))
-    
-    # 7.1.12 - Ensure no unowned files or directories exist
+
+    local world_writable=$(find / -xdev \( -type f -o -type d \) -perm -0002 2>/dev/null | head -20)
+    local ww_count=$(find / -xdev \( -type f -o -type d \) -perm -0002 2>/dev/null | wc -l)
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        if [[ ${ww_count} -eq 0 ]]; then
+            log_success "[${control_id}] PASS: No world writable files or directories found"
+            ((PASSED_CHECKS++))
+        else
+            log_warning "[${control_id}] FAIL: ${ww_count} world writable file(s) or directory(ies) found"
+            ((FAILED_CHECKS++))
+        fi
+    else
+        if [[ ${ww_count} -eq 0 ]]; then
+            log_success "[${control_id}] PASS: No world writable files or directories found"
+            ((PASSED_CHECKS++))
+        else
+            log_warning "[${control_id}] FAIL: ${ww_count} world writable file(s) or directory(ies) found"
+            log_warning "[${control_id}] REVIEW: ${world_writable:-No world writable files or directories found}"
+            ((FAILED_CHECKS++))
+        fi
+    fi
+
+    # 7.1.12 - Ensure no files or directories without an owner and a group exist
     control_id="7.1.12"
-    log_info "[${control_id}] Ensure no unowned files or directories exist"
+    log_info "[${control_id}] Ensure no files or directories without an owner and a group exist"
     ((TOTAL_CHECKS++))
-    
-    local unowned_files=$(find / -xdev -nouser 2>/dev/null | head -20)
-    local unowned_count=$(find / -xdev -nouser 2>/dev/null | wc -l)
-    
+
+    local unowned_files=$(find / -xdev \( -nouser -o -nogroup \) 2>/dev/null | head -20)
+    local unowned_count=$(find / -xdev \( -nouser -o -nogroup \) 2>/dev/null | wc -l)
+
     if [[ "${DRY_RUN}" == true ]]; then
         if [[ ${unowned_count} -eq 0 ]]; then
-            log_success "[${control_id}] PASS: No unowned files found"
+            log_success "[${control_id}] PASS: No files or directories without an owner or group found"
             ((PASSED_CHECKS++))
         else
-            log_warning "[${control_id}] FAIL: ${unowned_count} unowned files found"
+            log_warning "[${control_id}] FAIL: ${unowned_count} files or directories without an owner or group found"
             ((FAILED_CHECKS++))
         fi
     else
-        log_check_manual "${control_id}" \
-            "Review and assign ownership to unowned files" \
-            "Found ${unowned_count} unowned file(s) (showing first 20):
-${unowned_files:-No unowned files found}" \
-            "Assign appropriate ownership to all unowned files" \
-            "1. Find all unowned files: find / -xdev -nouser
-2. Investigate why files are unowned (deleted user, migration, etc.)
-3. Assign ownership: chown <user>:<group> <file>
-4. Or delete if no longer needed: rm <file>
-5. Verify: find / -xdev -nouser" \
-            "Unowned files may indicate deleted user accounts or security issues"
-        ((MANUAL_CHECKS++))
+        if [[ ${unowned_count} -eq 0 ]]; then
+            log_success "[${control_id}] PASS: No files or directories without an owner or group found"
+            ((PASSED_CHECKS++))
+        else
+            log_warning "[${control_id}] FAIL: ${unowned_count} files or directories without an owner or group found"
+            log_warning "[${control_id}] REVIEW: ${unowned_files:-No files or directories without an owner or group found}"
+            ((FAILED_CHECKS++))
+        fi
     fi
-    
-    # 7.1.13 - Ensure no ungrouped files or directories exist
+
+    # 7.1.13 - Ensure SUID and SGID files are reviewed
     control_id="7.1.13"
-    log_info "[${control_id}] Ensure no ungrouped files or directories exist"
+    log_info "[${control_id}] Ensure SUID and SGID files are reviewed"
     ((TOTAL_CHECKS++))
-    
-    local ungrouped_files=$(find / -xdev -nogroup 2>/dev/null | head -20)
-    local ungrouped_count=$(find / -xdev -nogroup 2>/dev/null | wc -l)
-    
-    if [[ "${DRY_RUN}" == true ]]; then
-        if [[ ${ungrouped_count} -eq 0 ]]; then
-            log_success "[${control_id}] PASS: No ungrouped files found"
-            ((PASSED_CHECKS++))
-        else
-            log_warning "[${control_id}] FAIL: ${ungrouped_count} ungrouped files found"
-            ((FAILED_CHECKS++))
-        fi
-    else
-        log_check_manual "${control_id}" \
-            "Review and assign group to ungrouped files" \
-            "Found ${ungrouped_count} ungrouped file(s) (showing first 20):
-${ungrouped_files:-No ungrouped files found}" \
-            "Assign appropriate group ownership to all ungrouped files" \
-            "1. Find all ungrouped files: find / -xdev -nogroup
-2. Investigate why files are ungrouped (deleted group, migration, etc.)
-3. Assign group: chgrp <group> <file>
-4. Or delete if no longer needed: rm <file>
-5. Verify: find / -xdev -nogroup" \
-            "Ungrouped files may indicate deleted groups or security issues"
-        ((MANUAL_CHECKS++))
-    fi
+
+    local suid_sgid_files=$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null | head -20)
+    local suid_sgid_count=$(find / -xdev -type f \( -perm -4000 -o -perm -2000 \) 2>/dev/null | wc -l)
+
+    log_check_manual "${control_id}" \
+        "Review SUID and SGID files" \
+        "Found ${suid_sgid_count} SUID/SGID file(s) (showing first 20):
+${suid_sgid_files:-No SUID or SGID files found}" \
+        "Review each SUID/SGID file and confirm it is required" \
+        "1. Use find / -xdev -type f \( -perm -4000 -o -perm -2000 \) to list SUID/SGID files
+2. Investigate whether each file requires elevated privileges
+3. Remove setuid/setgid bit from unnecessary files: chmod u-s <file> or chmod g-s <file>
+4. Document approved exceptions in security policy" \
+        "SUID/SGID files should be reviewed to ensure they are required and secure"
+    ((MANUAL_CHECKS++))
 }
 
 ################################################################################
@@ -396,68 +388,139 @@ ${dup_groups:-No duplicate group names}" \
         ((MANUAL_CHECKS++))
     fi
     
-    # 7.2.8 - Ensure root PATH Integrity
+    # 7.2.8 - Ensure local interactive user home directories are configured
     control_id="7.2.8"
-    log_info "[${control_id}] Ensure root PATH Integrity"
+    log_info "[${control_id}] Ensure local interactive user home directories are configured"
     ((TOTAL_CHECKS++))
-    
-    local root_path=$(echo $PATH)
-    local path_issues=""
-    if echo "${root_path}" | grep -q "::"; then
-        path_issues="${path_issues}- Empty directory in PATH (::)\n"
-    fi
-    if echo "${root_path}" | grep -q ":$"; then
-        path_issues="${path_issues}- Trailing colon in PATH\n"
-    fi
-    if echo "${root_path}" | grep -qE "(^|:)\.($|:)"; then
-        path_issues="${path_issues}- Current directory (.) in PATH\n"
-    fi
-    
-    log_check_manual "${control_id}" \
-        "Verify root PATH does not include '.' or writable directories" \
-        "Current root PATH:
-${root_path}
 
-Potential issues:
-${path_issues:-No obvious issues detected (manual verification still required)}" \
-        "Ensure root PATH does not contain '.' or world-writable directories" \
-        "1. Check root PATH: echo \$PATH
-2. Remove '.' from PATH if present
-3. Check for world-writable directories: for dir in \$(echo \$PATH | tr ':' ' '); do ls -ld \$dir; done
-4. Remove world-writable permissions: chmod o-w <directory>
-5. Update PATH in /root/.bash_profile or /root/.bashrc" \
-        "Insecure PATH can allow attackers to execute malicious commands as root"
-    ((MANUAL_CHECKS++))
-    
-    # 7.2.9 - Ensure root is the only UID 0 account
-    control_id="7.2.9"
-    log_info "[${control_id}] Ensure root is the only UID 0 account"
-    ((TOTAL_CHECKS++))
-    
+    local valid_shells
+    valid_shells="^($(awk -F/ '$NF != "nologin" {print}' /etc/shells | sed -rn '/^\//{s,/,\\/,g;p}' | paste -s -d '|' - ))$"
+    local home_issues=""
+
+    while IFS=: read -r user home; do
+        if [[ -z "$user" || -z "$home" ]]; then
+            continue
+        fi
+
+        if [[ ! -d "$home" ]]; then
+            home_issues+="User '$user' home directory '$home' does not exist\n"
+            continue
+        fi
+
+        local owner mode
+        owner=$(stat -c '%U' "$home" 2>/dev/null)
+        mode=$(stat -c '%a' "$home" 2>/dev/null)
+
+        if [[ "$owner" != "$user" ]]; then
+            home_issues+="User '$user' home directory '$home' is owned by '$owner'\n"
+        fi
+
+        if (( (8#$mode) & 027 )); then
+            home_issues+="User '$user' home directory '$home' is mode '$mode' and should be 750 or more restrictive\n"
+        fi
+    done < <(awk -v pat="$valid_shells" -F: '$(NF) ~ pat {print $1 ":" $(NF-1)}' /etc/passwd)
+
     if [[ "${DRY_RUN}" == true ]]; then
-        local uid0_count=$(awk -F: '($3 == 0) {print $1}' /etc/passwd | wc -l)
-        if [[ ${uid0_count} -eq 1 ]]; then
-            log_success "[${control_id}] PASS: Only root has UID 0"
+        if [[ -z "$home_issues" ]]; then
+            log_success "[${control_id}] PASS: Local interactive user home directories are configured"
             ((PASSED_CHECKS++))
         else
-            log_warning "[${control_id}] FAIL: ${uid0_count} accounts with UID 0"
+            log_warning "[${control_id}] FAIL: Issues found with local interactive user home directories"
+            log_warning "[${control_id}] REVIEW: $home_issues"
             ((FAILED_CHECKS++))
         fi
     else
-        local uid0_accounts=$(awk -F: '($3 == 0) {print $1}' /etc/passwd)
-        log_check_manual "${control_id}" \
-            "Remove or change UID for non-root accounts with UID 0" \
-            "Accounts with UID 0:
-${uid0_accounts}" \
-            "Ensure only root account has UID 0" \
-            "1. Find UID 0 accounts: awk -F: '(\$3 == 0) {print \$1}' /etc/passwd
-2. For non-root accounts with UID 0:
-   - Change UID: usermod -u <new_uid> <username>
-   - Or delete account: userdel <username>
-3. Update file ownership: find / -user 0 -not -user root -exec chown <new_uid> {} \\;
-4. Verify: awk -F: '(\$3 == 0) {print \$1}' /etc/passwd" \
-            "Only the root account should have UID 0 (superuser privileges)"
-        ((MANUAL_CHECKS++))
+        if [[ -z "$home_issues" ]]; then
+            log_success "[${control_id}] PASS: Local interactive user home directories are configured"
+            ((PASSED_CHECKS++))
+        else
+            log_warning "[${control_id}] FAIL: Issues found with local interactive user home directories"
+            log_warning "[${control_id}] REVIEW: $home_issues"
+            ((FAILED_CHECKS++))
+        fi
+    fi
+
+# 7.2.9 - Ensure local interactive user dot files access is configured
+    control_id="7.2.9"
+    log_info "[${control_id}] Ensure local interactive user dot files access is configured"
+    ((TOTAL_CHECKS++))
+
+    local dot_issues=""
+
+    while IFS=: read -r user home; do
+        if [[ -z "$user" || -z "$home" || ! -d "$home" ]]; then
+            continue
+        fi
+
+        local group
+        group=$(id -gn "$user" 2>/dev/null)
+
+        while IFS= read -r -d $'\0' file; do
+            local base mode owner gowner
+            base=$(basename "$file")
+            mode=$(stat -c '%a' "$file" 2>/dev/null)
+            owner=$(stat -c '%U' "$file" 2>/dev/null)
+            gowner=$(stat -c '%G' "$file" 2>/dev/null)
+
+            case "$base" in
+                .forward|.rhost)
+                    dot_issues+="User '$user' home file '$file' should not exist\n"
+                    ;;
+                .netrc)
+                    if (( (8#$mode) & 0177 )); then
+                        dot_issues+="User '$user' dot file '$file' is mode '$mode' and should be 0600 or more restrictive\n"
+                    fi
+                    if [[ "$owner" != "$user" ]]; then
+                        dot_issues+="User '$user' dot file '$file' is owned by '$owner'\n"
+                    fi
+                    if [[ "$gowner" != "$group" ]]; then
+                        dot_issues+="User '$user' dot file '$file' group owner is '$gowner' and should be '$group'\n"
+                    fi
+                    ;;
+                .bash_history)
+                    if (( (8#$mode) & 0177 )); then
+                        dot_issues+="User '$user' dot file '$file' is mode '$mode' and should be 0600 or more restrictive\n"
+                    fi
+                    if [[ "$owner" != "$user" ]]; then
+                        dot_issues+="User '$user' dot file '$file' is owned by '$owner'\n"
+                    fi
+                    if [[ "$gowner" != "$group" ]]; then
+                        dot_issues+="User '$user' dot file '$file' group owner is '$gowner' and should be '$group'\n"
+                    fi
+                    ;;
+                *)
+                    if (( (8#$mode) & 0133 )); then
+                        dot_issues+="User '$user' dot file '$file' is mode '$mode' and should be 0644 or more restrictive\n"
+                    fi
+                    if [[ "$owner" != "$user" ]]; then
+                        dot_issues+="User '$user' dot file '$file' is owned by '$owner'\n"
+                    fi
+                    if [[ "$gowner" != "$group" ]]; then
+                        dot_issues+="User '$user' dot file '$file' group owner is '$gowner' and should be '$group'\n"
+                    fi
+                    ;;
+            esac
+        done < <(find "$home" -xdev -type f -name '.*' -print0 2>/dev/null)
+    done < <(awk -v pat="$valid_shells" -F: '$(NF) ~ pat {print $1 ":" $(NF-1)}' /etc/passwd)
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        if [[ -z "$dot_issues" ]]; then
+            log_success "[${control_id}] PASS: Local interactive user dot file access is configured"
+            ((PASSED_CHECKS++))
+        else
+            log_warning "[${control_id}] FAIL: Issues found with local interactive user dot file permissions"
+            log_warning "[${control_id}] REVIEW: $dot_issues"
+            ((FAILED_CHECKS++))
+        fi
+    else
+        if [[ -z "$dot_issues" ]]; then
+            log_success "[${control_id}] PASS: Local interactive user dot file access is configured"
+            ((PASSED_CHECKS++))
+        else
+            log_warning "[${control_id}] FAIL: Issues found with local interactive user dot file permissions"
+            log_warning "[${control_id}] REVIEW: $dot_issues"
+            ((FAILED_CHECKS++))
+        fi
     fi
 }
 

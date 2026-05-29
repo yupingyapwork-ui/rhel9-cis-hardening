@@ -375,7 +375,7 @@ Select sections to remediate (space-separated numbers, or 'all'):
   SECTION 4: Firewall Configuration (7 checks)
   SECTION 5: Access, Authentication and Authorization (150 checks)
   SECTION 6: Logging and Auditing (100 checks)
-  SECTION 7: System Maintenance (20 checks)
+  SECTION 7: System Maintenance (22 checks)
 
 Examples:
   all       - Run all sections

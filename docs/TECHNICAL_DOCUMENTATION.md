@@ -303,9 +303,9 @@ The tool provides:
 
 #### 7.1 System File Permissions (13 checks)
 - 7.1.1-7.1.10 - Critical system file permissions
-- 7.1.11 - Ensure world writable files are secured (Manual)
-- 7.1.12 - Ensure no unowned files or directories exist
-- 7.1.13 - Ensure no ungrouped files or directories exist
+- 7.1.11 - Ensure world writable files and directories are secured
+- 7.1.12 - Ensure no files or directories without an owner and a group exist
+- 7.1.13 - Ensure SUID and SGID files are reviewed
 
 #### 7.2 User and Group Settings (9 checks)
 - 7.2.1 - Ensure accounts in /etc/passwd use shadowed passwords
@@ -315,8 +315,8 @@ The tool provides:
 - 7.2.5 - Ensure no duplicate GIDs exist
 - 7.2.6 - Ensure no duplicate user names exist
 - 7.2.7 - Ensure no duplicate group names exist
-- 7.2.8 - Ensure root PATH integrity (Manual)
-- 7.2.9 - Ensure root is the only UID 0 account
+- 7.2.8 - Ensure local interactive user home directories are configured
+- 7.2.9 - Ensure local interactive user dot files access is configured
 
 ---
 
