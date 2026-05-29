@@ -10,6 +10,27 @@
 # SECTION 6.1: SYSTEM FILE INTEGRITY
 ################################################################################
 
+# Helper functions for Section 6 automated evaluation
+audit_rule_exists() {
+    local expected="$1"
+    auditctl -l 2>/dev/null | grep -qF -- "$expected"
+}
+
+audit_rule_exists_regex() {
+    local pattern="$1"
+    auditctl -l 2>/dev/null | grep -qE -- "$pattern"
+}
+
+journal_conf_value() {
+    local key="$1"
+    grep -E "^[[:space:]]*${key}[[:space:]]*=" /etc/systemd/journald.conf 2>/dev/null | tail -n1 | awk -F= '{gsub(/^[[:space:]]+|[[:space:]]+$/,"", $2); print $2}'
+}
+
+auditd_conf_value() {
+    local key="$1"
+    grep -E "^[[:space:]]*${key}[[:space:]]*=" /etc/audit/auditd.conf 2>/dev/null | tail -n1 | awk -F= '{gsub(/^[[:space:]]+|[[:space:]]+$/,"", $2); print $2}'
+}
+
 remediate_aide() {
     if ! should_run_section "6.1"; then
         log_info "Skipping Section 6.1: System File Integrity (not selected)"
@@ -92,6 +113,54 @@ EOF
         log_success "[${control_id}] Remediated: AIDE configured and scheduled"
         ((REMEDIATED_CHECKS++))
     fi
+
+    control_id="6.1.3"
+    log_info "[${control_id}] Ensure cryptographic mechanisms are used to protect the integrity of audit tools"
+    ((TOTAL_CHECKS++))
+
+    if ! rpm -q aide &>/dev/null; then
+        log_warning "[${control_id}] SKIP: AIDE is not installed"
+    else
+        local AIDE_CONF="/etc/aide.conf"
+        if [[ ! -f "${AIDE_CONF}" ]]; then
+            log_check_failed "${control_id}" \
+                "Ensure cryptographic mechanisms are used to protect the integrity of audit tools" \
+                "AIDE configuration not found: ${AIDE_CONF}" \
+                "Configure AIDE with audit tool integrity rules and cryptographic hashes" \
+                "AIDE is installed but its configuration file is missing or not accessible" \
+                "Create or restore ${AIDE_CONF} and configure AIDE to monitor audit tool files with SHA512 checksums"
+            ((FAILED_CHECKS++))
+        else
+            local audit_tools=(auditctl auditd ausearch aureport autrace augenrules)
+            local missing_tools=()
+            for tool in "${audit_tools[@]}"; do
+                if ! grep -q -E "(^|/)${tool}(\b|$)" "${AIDE_CONF}" 2>/dev/null; then
+                    missing_tools+=("${tool}")
+                fi
+            done
+            local sha_check=false
+            if grep -qi 'sha512' "${AIDE_CONF}" 2>/dev/null; then
+                sha_check=true
+            fi
+
+            if [[ ${#missing_tools[@]} -eq 0 && "${sha_check}" == true ]]; then
+                log_success "[${control_id}] PASS: audit tools are protected with cryptographic mechanisms"
+                ((PASSED_CHECKS++))
+            else
+                local current_state="AIDE config: $(grep -nE '(^|/)(auditctl|auditd|ausearch|aureport|autrace|augenrules)(\b|$)' \"${AIDE_CONF}\" 2>/dev/null || echo 'No audit tool paths found')"
+                if [[ "${sha_check}" != true ]]; then
+                    current_state+="; SHA512 not found in config"
+                fi
+                log_check_failed "${control_id}" \
+                    "Ensure cryptographic mechanisms are used to protect the integrity of audit tools" \
+                    "${current_state}" \
+                    "AIDE config must include audit tool file entries and SHA512 cryptographic protection" \
+                    "AIDE is not configured to protect audit tools using cryptographic hashes" \
+                    "Update ${AIDE_CONF} to include audit tool paths and the required SHA512 hash options"
+                ((FAILED_CHECKS++))
+            fi
+        fi
+    fi
 }
 
 ################################################################################
@@ -163,120 +232,320 @@ remediate_system_logging() {
     
     # 6.2.1.4 - Ensure only one logging system is in use (Automated)
     control_id="6.2.1.4"
+    log_info "[${control_id}] Ensure only one logging system is in use"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure only one logging system is in use" \
-        "Installed logging systems: $(rpm -qa | grep -E 'rsyslog|syslog-ng' || echo 'None found')" \
-        "Use either rsyslog OR syslog-ng, not both" \
-        "1. Check installed: rpm -qa | grep -E 'rsyslog|syslog-ng'
-2. If both installed, remove one: dnf remove <package>
-3. Verify only one is active: systemctl status rsyslog syslog-ng" \
-        "Running multiple logging systems can cause conflicts and resource issues"
-    ((MANUAL_CHECKS++))
-    
-    # 6.2.2.x - Configure journald (Manual checks)
+
+    if systemctl is-active --quiet rsyslog.service; then
+        log_success "[${control_id}] PASS: rsyslog is active as the primary logging system"
+        ((PASSED_CHECKS++))
+    elif systemctl is-active --quiet systemd-journald.service; then
+        log_success "[${control_id}] PASS: systemd-journald is active as the primary logging system"
+        ((PASSED_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure only one logging system is in use" \
+            "Active logging services: rsyslog=$(systemctl is-active rsyslog.service 2>/dev/null || echo 'inactive'), systemd-journald=$(systemctl is-active systemd-journald.service 2>/dev/null || echo 'inactive')" \
+            "Either rsyslog or systemd-journald must be active as the single logging system" \
+            "No supported local logging service is active" \
+            "Enable and configure exactly one logging system: systemd-journald OR rsyslog" \
+            "/usr/bin/systemctl is-active rsyslog.service /usr/bin/systemctl is-active systemd-journald.service"
+        ((FAILED_CHECKS++))
+    fi
+
+    # 6.2.2.1.x - Configure journald remote
     for i in {1..4}; do
-        control_id="6.2.2.${i}"
+        control_id="6.2.2.1.${i}"
         ((TOTAL_CHECKS++))
-        local check_titles=(
-            "Ensure systemd-journal-remote is installed"
-            "Ensure systemd-journal-upload authentication is configured"
-            "Ensure systemd-journal-upload is enabled and active"
-            "Ensure systemd-journal-remote service is not in use"
-        )
-        log_check_manual "${control_id}" \
-            "${check_titles[$((i-1))]}" \
-            "Check /etc/systemd/journal-upload.conf and systemd-journal-remote status" \
-            "Configure journal remote logging per organizational requirements" \
-            "1. Review CIS Benchmark Section 6.2.2.${i}
-2. Configure /etc/systemd/journal-upload.conf
-3. Set up TLS certificates if needed
-4. Enable/disable services as required" \
-            "Remote logging configuration depends on organizational security policy"
-        ((MANUAL_CHECKS++))
+        case ${i} in
+            1)
+                if rpm -q systemd-journal-remote &>/dev/null; then
+                    log_success "[${control_id}] PASS: systemd-journal-remote is installed"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure systemd-journal-remote is installed" \
+                        "systemd-journal-remote package is not installed" \
+                        "Install systemd-journal-remote if remote journal collection is required" \
+                        "systemd-journal-remote is required for receiving remote journal logs" \
+                        "Install package: dnf install -y systemd-journal-remote"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            2)
+                log_check_manual "${control_id}" \
+                    "Ensure systemd-journal-upload authentication is configured" \
+                    "Current setting: $(grep -E '^\s*Server=.*' /etc/systemd/journal-upload.conf 2>/dev/null || echo 'Check authentication settings manually')" \
+                    "Configure authentication in /etc/systemd/journal-upload.conf" \
+                    "1. Review CIS Benchmark Section ${control_id}
+2. Configure journal-upload authentication
+3. Restart: systemctl restart systemd-journal-upload
+4. Verify: journal-upload can authenticate to remote server" \
+                    "Remote journal upload authentication is an organization-specific requirement"
+                ((MANUAL_CHECKS++))
+                ;;
+            3)
+                if systemctl is-enabled --quiet systemd-journal-upload.service && systemctl is-active --quiet systemd-journal-upload.service; then
+                    log_success "[${control_id}] PASS: systemd-journal-upload is enabled and active"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure systemd-journal-upload is enabled and active" \
+                        "systemd-journal-upload is not enabled or active" \
+                        "Enable and start systemd-journal-upload.service" \
+                        "systemd-journal-upload must be running to send remote journal logs" \
+                        "Enable: systemctl enable systemd-journal-upload.service; Start: systemctl start systemd-journal-upload.service"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            4)
+                if ! systemctl is-active --quiet systemd-journal-remote.service && ! systemctl is-enabled --quiet systemd-journal-remote.service; then
+                    log_success "[${control_id}] PASS: systemd-journal-remote is not in use"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure systemd-journal-remote service is not in use" \
+                        "systemd-journal-remote service is enabled or active" \
+                        "Disable systemd-journal-remote.service if not used" \
+                        "Remote journal receiving is not desired for this configuration" \
+                        "Disable: systemctl disable --now systemd-journal-remote.service"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+        esac
     done
     
-    # 6.2.2.2 - Ensure journald ForwardToSyslog is disabled (Automated)
+    # 6.2.2.2 - Ensure journald ForwardToSyslog is disabled
     control_id="6.2.2.2"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure journald ForwardToSyslog is disabled" \
-        "Current setting: $(grep -E '^ForwardToSyslog' /etc/systemd/journald.conf 2>/dev/null || echo 'Not explicitly set')" \
-        "ForwardToSyslog=no in /etc/systemd/journald.conf" \
-        "1. Edit /etc/systemd/journald.conf
-2. Set: ForwardToSyslog=no
-3. Restart: systemctl restart systemd-journald
-4. Verify: grep ForwardToSyslog /etc/systemd/journald.conf" \
-        "Disable forwarding if using journald as primary logging system"
-    ((MANUAL_CHECKS++))
+    local forward_to_syslog="$(journal_conf_value ForwardToSyslog)"
+    if [[ "${forward_to_syslog,,}" == "no" ]]; then
+        log_success "[${control_id}] PASS: ForwardToSyslog is disabled"
+        ((PASSED_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure journald ForwardToSyslog is disabled" \
+            "Current setting: ${forward_to_syslog:-Not explicitly set}" \
+            "ForwardToSyslog=no in /etc/systemd/journald.conf" \
+            "ForwardToSyslog should be disabled when using journald as the local logging system" \
+            "Edit /etc/systemd/journald.conf and set ForwardToSyslog=no"
+        ((FAILED_CHECKS++))
+    fi
     
-    # 6.2.2.3 - Ensure journald Compress is configured (Automated)
+    # 6.2.2.3 - Ensure journald Compress is configured
     control_id="6.2.2.3"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure journald Compress is configured" \
-        "Current setting: $(grep -E '^Compress' /etc/systemd/journald.conf 2>/dev/null || echo 'Using default (yes)')" \
-        "Compress=yes in /etc/systemd/journald.conf" \
-        "1. Edit /etc/systemd/journald.conf
-2. Set: Compress=yes
-3. Restart: systemctl restart systemd-journald
-4. Verify: grep Compress /etc/systemd/journald.conf" \
-        "Compression reduces disk space usage for log files"
-    ((MANUAL_CHECKS++))
+    local compress_setting="$(journal_conf_value Compress)"
+    if [[ -z "${compress_setting}" || "${compress_setting,,}" == "yes" ]]; then
+        log_success "[${control_id}] PASS: Compress is configured"
+        ((PASSED_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure journald Compress is configured" \
+            "Current setting: ${compress_setting:-Using default (yes)}" \
+            "Compress=yes in /etc/systemd/journald.conf" \
+            "Journald log compression should be enabled" \
+            "Edit /etc/systemd/journald.conf and set Compress=yes"
+        ((FAILED_CHECKS++))
+    fi
     
-    # 6.2.2.4 - Ensure journald Storage is configured (Automated)
+    # 6.2.2.4 - Ensure journald Storage is configured
     control_id="6.2.2.4"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure journald Storage is configured" \
-        "Current setting: $(grep -E '^Storage' /etc/systemd/journald.conf 2>/dev/null || echo 'Using default (auto)')" \
-        "Storage=persistent in /etc/systemd/journald.conf" \
-        "1. Edit /etc/systemd/journald.conf
-2. Set: Storage=persistent
-3. Restart: systemctl restart systemd-journald
-4. Verify: grep Storage /etc/systemd/journald.conf" \
-        "Persistent storage ensures logs survive reboots"
-    ((MANUAL_CHECKS++))
+    local storage_setting="$(journal_conf_value Storage)"
+    if [[ "${storage_setting,,}" == "persistent" ]]; then
+        log_success "[${control_id}] PASS: Storage is configured as persistent"
+        ((PASSED_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure journald Storage is configured" \
+            "Current setting: ${storage_setting:-Using default (auto)}" \
+            "Storage=persistent in /etc/systemd/journald.conf" \
+            "Persistent storage is required to retain logs across reboots" \
+            "Edit /etc/systemd/journald.conf and set Storage=persistent"
+        ((FAILED_CHECKS++))
+    fi
     
-    # 6.2.3.x - Configure rsyslog (Manual checks)
+    # 6.2.3.x - Configure rsyslog
     for i in {1..8}; do
         control_id="6.2.3.${i}"
         ((TOTAL_CHECKS++))
-        local rsyslog_titles=(
-            "Ensure rsyslog is installed"
-            "Ensure rsyslog service is enabled and active"
-            "Ensure journald is configured to send logs to rsyslog"
-            "Ensure rsyslog log file creation mode is configured"
-            "Ensure rsyslog logging is configured"
-            "Ensure rsyslog is configured to send logs to a remote log host"
-            "Ensure rsyslog is not configured to receive logs from a remote client"
-            "Ensure rsyslog logrotate is configured"
-        )
-        log_check_manual "${control_id}" \
-            "${rsyslog_titles[$((i-1))]}" \
-            "Check rsyslog configuration in /etc/rsyslog.conf and /etc/rsyslog.d/" \
-            "Configure rsyslog per organizational logging requirements" \
-            "1. Review CIS Benchmark Section 6.2.3.${i}
-2. Edit /etc/rsyslog.conf or files in /etc/rsyslog.d/
-3. Configure log forwarding, file permissions, and rotation
-4. Restart: systemctl restart rsyslog" \
-            "rsyslog configuration depends on organizational security and compliance requirements"
-        ((MANUAL_CHECKS++))
+        case ${i} in
+            1)
+                if rpm -q rsyslog &>/dev/null; then
+                    log_success "[${control_id}] PASS: rsyslog is installed"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure rsyslog is installed" \
+                        "rsyslog package is not installed" \
+                        "Install rsyslog if local or remote syslog processing is required" \
+                        "rsyslog is the syslog daemon used for centralized logging" \
+                        "Install package: dnf install -y rsyslog"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            2)
+                if systemctl is-enabled --quiet rsyslog.service && systemctl is-active --quiet rsyslog.service; then
+                    log_success "[${control_id}] PASS: rsyslog service is enabled and active"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure rsyslog service is enabled and active" \
+                        "rsyslog service is not enabled or active" \
+                        "Enable and start the rsyslog service" \
+                        "rsyslog must be running for local syslog processing" \
+                        "Enable: systemctl enable --now rsyslog.service"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            3)
+                local forward_setting="$(journal_conf_value ForwardToSyslog)"
+                if [[ "${forward_setting,,}" == "yes" ]]; then
+                    log_success "[${control_id}] PASS: journald forwards logs to rsyslog"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure journald is configured to send logs to rsyslog" \
+                        "Current ForwardToSyslog setting: ${forward_setting:-Not explicitly set}" \
+                        "ForwardToSyslog=yes in /etc/systemd/journald.conf" \
+                        "journald should forward logs to rsyslog when rsyslog is the local logging system" \
+                        "Edit /etc/systemd/journald.conf and set ForwardToSyslog=yes"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            4)
+                if grep -qE '^[[:space:]]*FileCreateMode[[:space:]]*=' /etc/rsyslog.conf 2>/dev/null || grep -qrE '^[[:space:]]*FileCreateMode[[:space:]]*=' /etc/rsyslog.d/ 2>/dev/null; then
+                    log_success "[${control_id}] PASS: rsyslog file creation mode is configured"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure rsyslog log file creation mode is configured" \
+                        "FileCreateMode is not configured in rsyslog configuration" \
+                        "Configure FileCreateMode in /etc/rsyslog.conf or /etc/rsyslog.d/*.conf" \
+                        "rsyslog log file creation mode should be restricted to appropriate permissions" \
+                        "Add a FileCreateMode directive to rsyslog configuration"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            5)
+                log_check_manual "${control_id}" \
+                    "Ensure rsyslog logging is configured" \
+                    "Check rsyslog configuration in /etc/rsyslog.conf and /etc/rsyslog.d/" \
+                    "Configure rsyslog logging rules per organizational requirements" \
+                    "1. Review CIS Benchmark Section ${control_id}
+2. Edit /etc/rsyslog.conf or /etc/rsyslog.d/*.conf
+3. Restart: systemctl restart rsyslog
+4. Verify rsyslog accepts and writes logs as expected" \
+                    "rsyslog logging setup depends on organizational policy"
+                ((MANUAL_CHECKS++))
+                ;;
+            6)
+                log_check_manual "${control_id}" \
+                    "Ensure rsyslog is configured to send logs to a remote log host" \
+                    "Check /etc/rsyslog.conf and /etc/rsyslog.d/ for remote host configuration" \
+                    "Configure rsyslog forwarding per organizational requirements" \
+                    "1. Review CIS Benchmark Section ${control_id}
+2. Add remote host forwarding directives to rsyslog config
+3. Restart: systemctl restart rsyslog
+4. Verify remote host is receiving logs" \
+                    "Remote log host configuration varies by environment"
+                ((MANUAL_CHECKS++))
+                ;;
+            7)
+                if grep -qE '^[[:space:]]*(module\(load\s*=\s*"imudp"\)|module\(load\s*=\s*"imtcp"\)|\$ModLoad\s+imudp|\$ModLoad\s+imtcp)' /etc/rsyslog.conf 2>/dev/null || grep -qrE '^[[:space:]]*(module\(load\s*=\s*"imudp"\)|module\(load\s*=\s*"imtcp"\)|\$ModLoad\s+imudp|\$ModLoad\s+imtcp)' /etc/rsyslog.d/ 2>/dev/null; then
+                    log_check_failed "${control_id}" \
+                        "Ensure rsyslog is not configured to receive logs from a remote client" \
+                        "rsyslog is configured to receive remote log input" \
+                        "Remove or disable remote log receiving modules" \
+                        "The host should not accept remote logs unless explicitly required" \
+                        "Disable imudp/imtcp modules in rsyslog configuration"
+                    ((FAILED_CHECKS++))
+                else
+                    log_success "[${control_id}] PASS: rsyslog is not configured to receive remote logs"
+                    ((PASSED_CHECKS++))
+                fi
+                ;;
+            8)
+                log_check_manual "${control_id}" \
+                    "Ensure rsyslog logrotate is configured" \
+                    "Check /etc/logrotate.d/rsyslog or related logrotate configuration" \
+                    "Configure rsyslog logrotate rules per site policy" \
+                    "1. Review CIS Benchmark Section ${control_id}
+2. Configure /etc/logrotate.d/rsyslog
+3. Verify log files are rotated properly" \
+                    "Log rotation configuration depends on logging retention policies"
+                ((MANUAL_CHECKS++))
+                ;;
+        esac
     done
     
     # 6.2.4.1 - Ensure access to all logfiles has been configured (Automated)
     control_id="6.2.4.1"
+    log_info "[${control_id}] Ensure access to all logfiles has been configured"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure access to all logfiles has been configured" \
-        "Current log file permissions: $(find /var/log -type f -ls 2>/dev/null | head -5 || echo 'Unable to list')" \
-        "All log files should have permissions 0640 or more restrictive" \
-        "1. Find world-readable logs: find /var/log -type f -perm /o+r
-2. Set permissions: chmod g-wx,o-rwx /var/log/*
-3. Verify: ls -la /var/log/
-4. Configure logrotate to maintain permissions" \
-        "Proper log file permissions prevent unauthorized access to sensitive system information"
-    ((MANUAL_CHECKS++))
+
+    local failed_entries=()
+    local audit_files=()
+    while IFS= read -r -d '' logfile; do
+        audit_files+=("${logfile}")
+    done < <(find /var/log -type f -print0 2>/dev/null)
+
+    if [[ ${#audit_files[@]} -eq 0 ]]; then
+        log_check_failed "${control_id}" \
+            "Ensure access to all logfiles has been configured" \
+            "No log files found under /var/log" \
+            "Log files under /var/log must have restrictive ownership and permissions" \
+            "The /var/log directory does not contain any regular log files or is inaccessible" \
+            "Verify /var/log exists and contains log files with appropriate permissions"
+        ((FAILED_CHECKS++))
+    else
+        for logfile in "${audit_files[@]}"; do
+            local base=$(basename "${logfile}")
+            local mode owner group
+            read -r mode owner group < <(stat -Lc '%a %U %G' "${logfile}" 2>/dev/null)
+            local maxperm
+            local allowed_users
+            local allowed_groups
+            if [[ "${base}" =~ ^(lastlog|lastlog\..*|wtmp|wtmp\..*|btmp|btmp\..*)$ ]]; then
+                maxperm=664
+                allowed_users='root'
+                allowed_groups='root'
+            elif [[ "${base}" =~ ^(gdm|gdm3|SSSD).* ]]; then
+                maxperm=660
+                allowed_users='root|SSSD'
+                allowed_groups='root|SSSD|gdm|gdm3'
+            else
+                maxperm=640
+                allowed_users='root|syslog'
+                allowed_groups='root|adm'
+            fi
+
+            if (( 10#${mode} > 10#${maxperm} )); then
+                failed_entries+=("${logfile}: mode ${mode} is more permissive than ${maxperm}")
+            fi
+            if ! [[ "${owner}" =~ ^(${allowed_users})$ ]]; then
+                failed_entries+=("${logfile}: owner ${owner} is not one of ${allowed_users}")
+            fi
+            if ! [[ "${group}" =~ ^(${allowed_groups})$ ]]; then
+                failed_entries+=("${logfile}: group ${group} is not one of ${allowed_groups}")
+            fi
+        done
+
+        if [[ ${#failed_entries[@]} -eq 0 ]]; then
+            log_success "[${control_id}] PASS: /var/log file permissions and ownership are compliant"
+            ((PASSED_CHECKS++))
+        else
+            local current_state="$(printf '%s
+' "${failed_entries[@]}" | head -20)"
+            log_check_failed "${control_id}" \
+                "Ensure access to all logfiles has been configured" \
+                "Non-compliant log files found:\n${current_state}" \
+                "Log files under /var/log must have appropriate ownership and permissions per CIS guidance" \
+                "Some /var/log files do not meet CIS ownership or permission requirements" \
+                "Review /var/log file permissions and ownership, and correct them to match CIS 6.2.4.1 rules"
+            ((FAILED_CHECKS++))
+        fi
+    fi
 }
 
 ################################################################################
@@ -320,45 +589,51 @@ remediate_auditd() {
     # 6.3.1.2 - Ensure auditing for processes that start prior to auditd is enabled
     control_id="6.3.1.2"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure auditing for processes that start prior to auditd is enabled" \
-        "Current GRUB config: $(grep -E 'audit=1' /etc/default/grub 2>/dev/null || echo 'audit=1 not found')" \
-        "Add audit=1 to GRUB_CMDLINE_LINUX in /etc/default/grub" \
-        "1. Edit /etc/default/grub
-2. Add audit=1 to GRUB_CMDLINE_LINUX
-3. Update GRUB: grub2-mkconfig -o /boot/grub2/grub.cfg
-4. Reboot system
-5. Verify: cat /proc/cmdline | grep audit=1" \
-        "Early boot auditing captures events before auditd starts"
-    ((MANUAL_CHECKS++))
+    if grep -q -E '(^|[[:space:]])audit=1($|[[:space:]])' /proc/cmdline 2>/dev/null; then
+        log_success "[${control_id}] PASS: audit=1 is present in the kernel command line"
+        ((PASSED_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure auditing for processes that start prior to auditd is enabled" \
+            "Current kernel command line: $(cat /proc/cmdline 2>/dev/null || echo 'Unavailable')" \
+            "Add audit=1 to GRUB_CMDLINE_LINUX in /etc/default/grub and regenerate GRUB config" \
+            "Early boot auditing captures events before auditd starts" \
+            "Edit /etc/default/grub, regenerate GRUB config, and reboot to apply audit=1"
+        ((FAILED_CHECKS++))
+    fi
     
     # 6.3.1.3 - Ensure audit_backlog_limit is sufficient
     control_id="6.3.1.3"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure audit_backlog_limit is sufficient" \
-        "Current setting: $(grep -E 'audit_backlog_limit' /etc/default/grub 2>/dev/null || echo 'Not set')" \
-        "Add audit_backlog_limit=8192 to GRUB_CMDLINE_LINUX" \
-        "1. Edit /etc/default/grub
-2. Add audit_backlog_limit=8192 to GRUB_CMDLINE_LINUX
-3. Update GRUB: grub2-mkconfig -o /boot/grub2/grub.cfg
-4. Reboot system
-5. Verify: cat /proc/cmdline | grep audit_backlog_limit" \
-        "Sufficient backlog prevents audit event loss during high activity"
-    ((MANUAL_CHECKS++))
+    local backlog_limit="$(grep -oE 'audit_backlog_limit=[0-9]+' /proc/cmdline 2>/dev/null | cut -d= -f2 | tail -n1 || true)"
+    if [[ -n "${backlog_limit}" && ${backlog_limit} -ge 8192 ]]; then
+        log_success "[${control_id}] PASS: audit_backlog_limit=${backlog_limit} is configured"
+        ((PASSED_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure audit_backlog_limit is sufficient" \
+            "Current kernel command line: $(cat /proc/cmdline 2>/dev/null || echo 'Unavailable')" \
+            "Add audit_backlog_limit=8192 to GRUB_CMDLINE_LINUX in /etc/default/grub" \
+            "Sufficient backlog prevents audit event loss during high activity" \
+            "Edit /etc/default/grub, regenerate GRUB config, and reboot to apply audit_backlog_limit=8192"
+        ((FAILED_CHECKS++))
+    fi
     
     # 6.3.1.4 - Ensure auditd service is enabled and active
     control_id="6.3.1.4"
     ((TOTAL_CHECKS++))
-    log_check_manual "${control_id}" \
-        "Ensure auditd service is enabled and active" \
-        "Status: $(systemctl is-enabled auditd 2>&1), $(systemctl is-active auditd 2>&1)" \
-        "auditd should be enabled and active" \
-        "1. Enable: systemctl enable auditd
-2. Start: systemctl start auditd
-3. Verify: systemctl status auditd" \
-        "Active auditd service is required for system auditing"
-    ((MANUAL_CHECKS++))
+    if systemctl is-enabled --quiet auditd.service && systemctl is-active --quiet auditd.service; then
+        log_success "[${control_id}] PASS: auditd service is enabled and active"
+        ((PASSED_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure auditd service is enabled and active" \
+            "Status: $(systemctl is-enabled auditd 2>&1), $(systemctl is-active auditd 2>&1)" \
+            "auditd should be enabled and active" \
+            "Active auditd service is required for system auditing" \
+            "Enable and start auditd using: systemctl enable --now auditd.service"
+        ((FAILED_CHECKS++))
+    fi
     
     # Section 6.3.2: Configure Data Retention (checks 1-4)
     local retention_checks=(
@@ -371,17 +646,70 @@ remediate_auditd() {
     for i in {1..4}; do
         control_id="6.3.2.${i}"
         ((TOTAL_CHECKS++))
-        IFS='|' read -r title action desc <<< "${retention_checks[$((i-1))]}"
-        log_check_manual "${control_id}" \
-            "${title}" \
-            "Current /etc/audit/auditd.conf settings: $(grep -E 'max_log_file|space_left|action_mail' /etc/audit/auditd.conf 2>/dev/null || echo 'Check file')" \
-            "${action}" \
-            "1. Edit /etc/audit/auditd.conf
-2. Configure retention settings per site policy
-3. Restart: service auditd restart
-4. Verify: grep -E 'max_log_file|space_left' /etc/audit/auditd.conf" \
-            "${desc}"
-        ((MANUAL_CHECKS++))
+        case ${i} in
+            1)
+                local max_log_file="$(auditd_conf_value max_log_file)"
+                if [[ -n "${max_log_file}" && ${max_log_file} -gt 0 ]]; then
+                    log_success "[${control_id}] PASS: max_log_file=${max_log_file} is configured"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure audit log storage size is configured" \
+                        "Current max_log_file setting: ${max_log_file:-Not configured}" \
+                        "Configure max_log_file in /etc/audit/auditd.conf" \
+                        "Audit log storage size must be explicitly configured" \
+                        "Set max_log_file in /etc/audit/auditd.conf according to site policy"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            2)
+                local max_log_file_action="$(auditd_conf_value max_log_file_action)"
+                if [[ "${max_log_file_action,,}" == "keep_logs" ]]; then
+                    log_success "[${control_id}] PASS: max_log_file_action=keep_logs is configured"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure audit logs are not automatically deleted" \
+                        "Current max_log_file_action setting: ${max_log_file_action:-Not configured}" \
+                        "Set max_log_file_action=keep_logs in /etc/audit/auditd.conf" \
+                        "Audit logs should not be deleted automatically" \
+                        "Update /etc/audit/auditd.conf and restart auditd"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            3)
+                local space_left_action="$(auditd_conf_value space_left_action)"
+                local admin_space_left_action="$(auditd_conf_value admin_space_left_action)"
+                if [[ "${space_left_action,,}" == "email" && "${admin_space_left_action,,}" == "halt" ]]; then
+                    log_success "[${control_id}] PASS: space_left_action=email and admin_space_left_action=halt are configured"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure system is disabled when audit logs are full" \
+                        "Current settings: space_left_action=${space_left_action:-Not configured}, admin_space_left_action=${admin_space_left_action:-Not configured}" \
+                        "Set space_left_action=email and admin_space_left_action=halt in /etc/audit/auditd.conf" \
+                        "The system must halt when audit logs are full" \
+                        "Update /etc/audit/auditd.conf and restart auditd"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+            4)
+                local space_left="$(auditd_conf_value space_left)"
+                local action_mail_acct="$(auditd_conf_value action_mail_acct)"
+                if [[ -n "${space_left}" && -n "${action_mail_acct}" ]]; then
+                    log_success "[${control_id}] PASS: space_left and action_mail_acct are configured"
+                    ((PASSED_CHECKS++))
+                else
+                    log_check_failed "${control_id}" \
+                        "Ensure system warns when audit logs are low on space" \
+                        "Current settings: space_left=${space_left:-Not configured}, action_mail_acct=${action_mail_acct:-Not configured}" \
+                        "Set space_left and action_mail_acct in /etc/audit/auditd.conf" \
+                        "Audit log space warnings must be configured" \
+                        "Update /etc/audit/auditd.conf and restart auditd"
+                    ((FAILED_CHECKS++))
+                fi
+                ;;
+        esac
     done
     
     # Section 6.3.3: Configure auditd Rules (checks 1-21)
@@ -397,15 +725,19 @@ remediate_auditd() {
     control_id="6.3.3.1"
     log_info "[${control_id}] Ensure changes to system administration scope (sudoers) is collected"
     ((TOTAL_CHECKS++))
-    
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+
+    if audit_rule_exists "-w /etc/sudoers -p wa -k scope" && audit_rule_exists "-w /etc/sudoers.d -p wa -k scope"; then
+        log_success "[${control_id}] PASS: sudoers monitoring audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure changes to system administration scope (sudoers) is collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep -E '/etc/sudoers|/etc/sudoers.d' || echo 'No rules found')" \
             "Monitor changes to sudoers files" \
             "Verify audit rules are configured to monitor /etc/sudoers and /etc/sudoers.d/" \
-            "Tracks changes to sudo configuration"
-        ((MANUAL_CHECKS++))
+            "Tracks changes to sudo configuration" \
+            "Add audit watch rules for /etc/sudoers and /etc/sudoers.d/"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure sudoers monitoring audit rules?"; then
         backup_file "/etc/audit/rules.d/50-scope.rules"
         cat > /etc/audit/rules.d/50-scope.rules << 'EOF'
@@ -416,7 +748,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Sudoers monitoring configured (verify with: auditctl -l)"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure changes to system administration scope (sudoers) is collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep -E '/etc/sudoers|/etc/sudoers.d' || echo 'No rules found')" \
+            "Monitor changes to sudoers files" \
+            "Verify audit rules are configured to monitor /etc/sudoers and /etc/sudoers.d/" \
+            "Tracks changes to sudo configuration" \
+            "Add audit watch rules for /etc/sudoers and /etc/sudoers.d/"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.2 - Ensure actions as another user are always logged
@@ -424,14 +764,18 @@ EOF
     log_info "[${control_id}] Ensure actions as another user are always logged"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex 'uid!=euid.*-k user_emulation'; then
+        log_success "[${control_id}] PASS: user impersonation audit rule is loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure actions as another user are always logged" \
             "Current rules: $(auditctl -l 2>/dev/null | grep execve || echo 'No rules found')" \
             "Monitor execve syscalls where uid != euid" \
             "Verify audit rules track user impersonation attempts" \
-            "Detects when users execute commands as another user"
-        ((MANUAL_CHECKS++))
+            "Detects when users execute commands as another user" \
+            "Add audit rules for execve with uid!=euid and euid=0"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure user impersonation monitoring?"; then
         backup_file "/etc/audit/rules.d/50-user_emulation.rules"
         cat > /etc/audit/rules.d/50-user_emulation.rules << EOF
@@ -442,7 +786,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: User impersonation monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure actions as another user are always logged" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep execve || echo 'No rules found')" \
+            "Monitor execve syscalls where uid != euid" \
+            "Verify audit rules track user impersonation attempts" \
+            "Detects when users execute commands as another user" \
+            "Add audit rules for execve with uid!=euid and euid=0"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.3 - Ensure events that modify the sudo log file are collected
@@ -450,17 +802,21 @@ EOF
     log_info "[${control_id}] Ensure events that modify the sudo log file are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    local SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* 2>/dev/null | awk '{print $NF}' | tr -d '"' | head -1)
+    SUDO_LOG_FILE=${SUDO_LOG_FILE:-/var/log/sudo.log}
+    if audit_rule_exists "-w ${SUDO_LOG_FILE} -p wa -k sudo_log_file"; then
+        log_success "[${control_id}] PASS: sudo log file audit rule is loaded for ${SUDO_LOG_FILE}"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure events that modify the sudo log file are collected" \
-            "Sudo log location: $(grep -r logfile /etc/sudoers* 2>/dev/null || echo '/var/log/sudo.log (default)')" \
+            "Sudo log location: ${SUDO_LOG_FILE}" \
             "Monitor sudo log file for modifications" \
             "Configure audit rules for the sudo log file location" \
-            "Tracks modifications to sudo command logs"
-        ((MANUAL_CHECKS++))
+            "Tracks modifications to sudo command logs" \
+            "Add an audit watch for ${SUDO_LOG_FILE}"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure sudo log monitoring?"; then
-        local SUDO_LOG_FILE=$(grep -r logfile /etc/sudoers* 2>/dev/null | awk '{print $NF}' | tr -d '"' | head -1)
-        SUDO_LOG_FILE=${SUDO_LOG_FILE:-/var/log/sudo.log}
         backup_file "/etc/audit/rules.d/50-sudo.rules"
         cat > /etc/audit/rules.d/50-sudo.rules << EOF
 ## CIS 6.3.3.3 - Monitor sudo log file
@@ -469,7 +825,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Sudo log monitoring configured for ${SUDO_LOG_FILE}"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure events that modify the sudo log file are collected" \
+            "Sudo log location: ${SUDO_LOG_FILE}" \
+            "Monitor sudo log file for modifications" \
+            "Configure audit rules for the sudo log file location" \
+            "Tracks modifications to sudo command logs" \
+            "Add an audit watch for ${SUDO_LOG_FILE}"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.4 - Ensure events that modify date and time information are collected
@@ -477,14 +841,18 @@ EOF
     log_info "[${control_id}] Ensure events that modify date and time information are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex 'time-change'; then
+        log_success "[${control_id}] PASS: time-change audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure events that modify date and time information are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep time-change || echo 'No rules found')" \
             "Monitor system time modifications" \
             "Verify audit rules for adjtimex, settimeofday, clock_settime syscalls" \
-            "Tracks unauthorized time changes"
-        ((MANUAL_CHECKS++))
+            "Tracks unauthorized time changes" \
+            "Add audit rules for time-change syscalls and /etc/localtime"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure time modification monitoring?"; then
         backup_file "/etc/audit/rules.d/50-time-change.rules"
         cat > /etc/audit/rules.d/50-time-change.rules << EOF
@@ -496,7 +864,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Time modification monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure events that modify date and time information are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep time-change || echo 'No rules found')" \
+            "Monitor system time modifications" \
+            "Verify audit rules for adjtimex, settimeofday, clock_settime syscalls" \
+            "Tracks unauthorized time changes" \
+            "Add audit rules for time-change syscalls and /etc/localtime"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.5 - Ensure events that modify the system's network environment are collected
@@ -504,14 +880,18 @@ EOF
     log_info "[${control_id}] Ensure events that modify the system's network environment are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex 'system-locale'; then
+        log_success "[${control_id}] PASS: network environment audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure events that modify the system's network environment are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep system-locale || echo 'No rules found')" \
             "Monitor network configuration changes" \
             "Verify audit rules for hostname, domainname, network files" \
-            "Tracks network environment modifications"
-        ((MANUAL_CHECKS++))
+            "Tracks network environment modifications" \
+            "Add audit rules for system-locale monitoring"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure network environment monitoring?"; then
         backup_file "/etc/audit/rules.d/50-system_local.rules"
         cat > /etc/audit/rules.d/50-system_local.rules << EOF
@@ -530,7 +910,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Network environment monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure events that modify the system's network environment are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep system-locale || echo 'No rules found')" \
+            "Monitor network configuration changes" \
+            "Verify audit rules for hostname, domainname, network files" \
+            "Tracks network environment modifications" \
+            "Add audit rules for system-locale monitoring"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.6 - Ensure use of privileged commands are collected
@@ -538,14 +926,18 @@ EOF
     log_info "[${control_id}] Ensure use of privileged commands are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k privileged'; then
+        log_success "[${control_id}] PASS: privileged command audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure use of privileged commands are collected" \
-            "Privileged commands: $(find / -xdev \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null | wc -l) found" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep -i privileged || echo 'No rules found')" \
             "Monitor execution of SUID/SGID programs" \
-            "Run: find / -xdev \( -perm -4000 -o -perm -2000 \) -type f | awk '{print \"-a always,exit -F path=\" \$1 \" -F perm=x -F auid>=1000 -F auid!=unset -k privileged\"}' >> /etc/audit/rules.d/50-privileged.rules" \
-            "Tracks privileged command execution"
-        ((MANUAL_CHECKS++))
+            "Run: find / -xdev \( -perm -4000 -o -perm -2000 \) -type f | awk '{print "-a always,exit -F path=" \$1 " -F perm=x -F auid>=1000 -F auid!=unset -k privileged"}' >> /etc/audit/rules.d/50-privileged.rules" \
+            "Tracks privileged command execution" \
+            "Add privileged command monitoring audit rules"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure privileged command monitoring? (This may take a moment)"; then
         backup_file "/etc/audit/rules.d/50-privileged.rules"
         echo "## CIS 6.3.3.6 - Monitor privileged commands" > /etc/audit/rules.d/50-privileged.rules
@@ -555,7 +947,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Privileged command monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure use of privileged commands are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep -i privileged || echo 'No rules found')" \
+            "Monitor execution of SUID/SGID programs" \
+            "Run: find / -xdev \( -perm -4000 -o -perm -2000 \) -type f | awk '{print "-a always,exit -F path=" \$1 " -F perm=x -F auid>=1000 -F auid!=unset -k privileged"}' >> /etc/audit/rules.d/50-privileged.rules" \
+            "Tracks privileged command execution" \
+            "Add privileged command monitoring audit rules"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.7 - Ensure unsuccessful file access attempts are collected
@@ -563,14 +963,18 @@ EOF
     log_info "[${control_id}] Ensure unsuccessful file access attempts are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k access'; then
+        log_success "[${control_id}] PASS: failed access audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure unsuccessful file access attempts are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep access || echo 'No rules found')" \
             "Monitor failed file access attempts" \
             "Verify audit rules for EACCES and EPERM errors" \
-            "Tracks unauthorized access attempts"
-        ((MANUAL_CHECKS++))
+            "Tracks unauthorized access attempts" \
+            "Add audit rules for EACCES and EPERM failures"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure failed access monitoring?"; then
         backup_file "/etc/audit/rules.d/50-access.rules"
         cat > /etc/audit/rules.d/50-access.rules << EOF
@@ -583,7 +987,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Failed access monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure unsuccessful file access attempts are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep access || echo 'No rules found')" \
+            "Monitor failed file access attempts" \
+            "Verify audit rules for EACCES and EPERM errors" \
+            "Tracks unauthorized access attempts" \
+            "Add audit rules for EACCES and EPERM failures"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.8 - Ensure events that modify user/group information are collected
@@ -620,14 +1032,18 @@ EOF
     log_info "[${control_id}] Ensure discretionary access control permission modification events are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k perm_mod'; then
+        log_success "[${control_id}] PASS: permission modification audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure discretionary access control permission modification events are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep perm_mod || echo 'No rules found')" \
             "Monitor permission changes" \
             "Verify audit rules for chmod, fchmod, fchmodat, chown, fchown, etc." \
-            "Tracks file permission modifications"
-        ((MANUAL_CHECKS++))
+            "Tracks file permission modifications" \
+            "Add audit rules for perm_mod"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure permission modification monitoring?"; then
         backup_file "/etc/audit/rules.d/50-perm_mod.rules"
         cat > /etc/audit/rules.d/50-perm_mod.rules << EOF
@@ -642,7 +1058,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Permission modification monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure discretionary access control permission modification events are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep perm_mod || echo 'No rules found')" \
+            "Monitor permission changes" \
+            "Verify audit rules for chmod, fchmod, fchmodat, chown, fchown, etc." \
+            "Tracks file permission modifications" \
+            "Add audit rules for perm_mod"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.10 - Ensure successful file system mounts are collected
@@ -650,14 +1074,18 @@ EOF
     log_info "[${control_id}] Ensure successful file system mounts are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k mounts'; then
+        log_success "[${control_id}] PASS: mount audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure successful file system mounts are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep mounts || echo 'No rules found')" \
             "Monitor mount operations" \
             "Verify audit rules for mount syscall" \
-            "Tracks filesystem mount operations"
-        ((MANUAL_CHECKS++))
+            "Tracks filesystem mount operations" \
+            "Add mount syscall audit rules"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure mount monitoring?"; then
         backup_file "/etc/audit/rules.d/50-mounts.rules"
         cat > /etc/audit/rules.d/50-mounts.rules << EOF
@@ -668,7 +1096,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Mount monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure successful file system mounts are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep mounts || echo 'No rules found')" \
+            "Monitor mount operations" \
+            "Verify audit rules for mount syscall" \
+            "Tracks filesystem mount operations" \
+            "Add mount syscall audit rules"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.11 - Ensure session initiation information is collected
@@ -676,14 +1112,18 @@ EOF
     log_info "[${control_id}] Ensure session initiation information is collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k session'; then
+        log_success "[${control_id}] PASS: session initiation audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure session initiation information is collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep session || echo 'No rules found')" \
             "Monitor session files" \
             "Verify audit rules for /var/run/utmp, /var/log/wtmp, /var/log/btmp" \
-            "Tracks user login/logout sessions"
-        ((MANUAL_CHECKS++))
+            "Tracks user login/logout sessions" \
+            "Add audit watch rules for session files"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure session monitoring?"; then
         backup_file "/etc/audit/rules.d/50-session.rules"
         cat > /etc/audit/rules.d/50-session.rules << 'EOF'
@@ -695,7 +1135,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Session monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure session initiation information is collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep session || echo 'No rules found')" \
+            "Monitor session files" \
+            "Verify audit rules for /var/run/utmp, /var/log/wtmp, /var/log/btmp" \
+            "Tracks user login/logout sessions" \
+            "Add audit watch rules for session files"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.12 - Ensure login and logout events are collected
@@ -703,14 +1151,18 @@ EOF
     log_info "[${control_id}] Ensure login and logout events are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k logins'; then
+        log_success "[${control_id}] PASS: login/logout audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure login and logout events are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep logins || echo 'No rules found')" \
             "Monitor login/logout events" \
             "Verify audit rules for /var/log/lastlog, /var/run/faillock" \
-            "Tracks user authentication events"
-        ((MANUAL_CHECKS++))
+            "Tracks user authentication events" \
+            "Add audit watch rules for login/logout files"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure login/logout monitoring?"; then
         backup_file "/etc/audit/rules.d/50-login.rules"
         cat > /etc/audit/rules.d/50-login.rules << 'EOF'
@@ -721,7 +1173,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Login/logout monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure login and logout events are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep logins || echo 'No rules found')" \
+            "Monitor login/logout events" \
+            "Verify audit rules for /var/log/lastlog, /var/run/faillock" \
+            "Tracks user authentication events" \
+            "Add audit watch rules for login/logout files"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.13 - Ensure file deletion events by users are collected
@@ -729,14 +1189,18 @@ EOF
     log_info "[${control_id}] Ensure file deletion events by users are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k delete'; then
+        log_success "[${control_id}] PASS: file deletion audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure file deletion events by users are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep delete || echo 'No rules found')" \
             "Monitor file deletions" \
             "Verify audit rules for unlink, unlinkat, rename, renameat syscalls" \
-            "Tracks file deletion operations"
-        ((MANUAL_CHECKS++))
+            "Tracks file deletion operations" \
+            "Add audit rules for file deletion syscalls"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure file deletion monitoring?"; then
         backup_file "/etc/audit/rules.d/50-delete.rules"
         cat > /etc/audit/rules.d/50-delete.rules << EOF
@@ -747,7 +1211,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: File deletion monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure file deletion events by users are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep delete || echo 'No rules found')" \
+            "Monitor file deletions" \
+            "Verify audit rules for unlink, unlinkat, rename, renameat syscalls" \
+            "Tracks file deletion operations" \
+            "Add audit rules for file deletion syscalls"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.14 - Ensure events that modify the system's Mandatory Access Controls are collected
@@ -755,14 +1227,18 @@ EOF
     log_info "[${control_id}] Ensure events that modify the system's Mandatory Access Controls are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex 'MAC-policy'; then
+        log_success "[${control_id}] PASS: MAC policy audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure events that modify the system's Mandatory Access Controls are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep MAC-policy || echo 'No rules found')" \
             "Monitor SELinux policy changes" \
             "Verify audit rules for /etc/selinux/" \
-            "Tracks MAC policy modifications"
-        ((MANUAL_CHECKS++))
+            "Tracks MAC policy modifications" \
+            "Add audit rules for MAC-policy monitoring"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure MAC monitoring?"; then
         backup_file "/etc/audit/rules.d/50-MAC-policy.rules"
         cat > /etc/audit/rules.d/50-MAC-policy.rules << 'EOF'
@@ -773,7 +1249,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: MAC monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure events that modify the system's Mandatory Access Controls are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep MAC-policy || echo 'No rules found')" \
+            "Monitor SELinux policy changes" \
+            "Verify audit rules for /etc/selinux/" \
+            "Tracks MAC policy modifications" \
+            "Add audit rules for MAC-policy monitoring"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.15 - Ensure successful and unsuccessful attempts to use the chcon command are collected
@@ -781,14 +1265,18 @@ EOF
     log_info "[${control_id}] Ensure successful and unsuccessful attempts to use the chcon command are collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k perm_chng'; then
+        log_success "[${control_id}] PASS: chcon audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure chcon command usage is collected" \
             "chcon location: $(which chcon 2>/dev/null || echo 'Not found')" \
             "Monitor chcon command execution" \
             "Verify audit rules for chcon command" \
-            "Tracks SELinux context changes"
-        ((MANUAL_CHECKS++))
+            "Tracks SELinux context changes" \
+            "Add audit rules for chcon command execution"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure chcon monitoring?"; then
         local CHCON_PATH=$(which chcon 2>/dev/null || echo "/usr/bin/chcon")
         backup_file "/etc/audit/rules.d/50-perm_chng.rules"
@@ -799,7 +1287,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: chcon monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure chcon command usage is collected" \
+            "chcon location: $(which chcon 2>/dev/null || echo 'Not found')" \
+            "Monitor chcon command execution" \
+            "Verify audit rules for chcon command" \
+            "Tracks SELinux context changes" \
+            "Add audit rules for chcon command execution"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.16 - Ensure successful and unsuccessful attempts to use the setfacl command are collected
@@ -807,14 +1303,18 @@ EOF
     log_info "[${control_id}] Ensure setfacl command usage is collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k priv_cmd'; then
+        log_success "[${control_id}] PASS: setfacl audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure setfacl command usage is collected" \
             "setfacl location: $(which setfacl 2>/dev/null || echo 'Not found')" \
             "Monitor setfacl command execution" \
             "Verify audit rules for setfacl command" \
-            "Tracks ACL modifications"
-        ((MANUAL_CHECKS++))
+            "Tracks ACL modifications" \
+            "Add audit rules for setfacl command execution"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure setfacl monitoring?"; then
         local SETFACL_PATH=$(which setfacl 2>/dev/null || echo "/usr/bin/setfacl")
         cat >> /etc/audit/rules.d/50-perm_chng.rules << EOF
@@ -824,7 +1324,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: setfacl monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure setfacl command usage is collected" \
+            "setfacl location: $(which setfacl 2>/dev/null || echo 'Not found')" \
+            "Monitor setfacl command execution" \
+            "Verify audit rules for setfacl command" \
+            "Tracks ACL modifications" \
+            "Add audit rules for setfacl command execution"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.17 - Ensure successful and unsuccessful attempts to use the chacl command are collected
@@ -832,14 +1340,18 @@ EOF
     log_info "[${control_id}] Ensure chacl command usage is collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k priv_cmd'; then
+        log_success "[${control_id}] PASS: chacl audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure chacl command usage is collected" \
             "chacl location: $(which chacl 2>/dev/null || echo 'Not found')" \
             "Monitor chacl command execution" \
             "Verify audit rules for chacl command" \
-            "Tracks ACL changes"
-        ((MANUAL_CHECKS++))
+            "Tracks ACL changes" \
+            "Add audit rules for chacl command execution"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure chacl monitoring?"; then
         local CHACL_PATH=$(which chacl 2>/dev/null || echo "/usr/bin/chacl")
         cat >> /etc/audit/rules.d/50-perm_chng.rules << EOF
@@ -849,7 +1361,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: chacl monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure chacl command usage is collected" \
+            "chacl location: $(which chacl 2>/dev/null || echo 'Not found')" \
+            "Monitor chacl command execution" \
+            "Verify audit rules for chacl command" \
+            "Tracks ACL changes" \
+            "Add audit rules for chacl command execution"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.18 - Ensure successful and unsuccessful attempts to use the usermod command are collected
@@ -857,14 +1377,18 @@ EOF
     log_info "[${control_id}] Ensure usermod command usage is collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k usermod'; then
+        log_success "[${control_id}] PASS: usermod audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure usermod command usage is collected" \
             "usermod location: $(which usermod 2>/dev/null || echo 'Not found')" \
             "Monitor usermod command execution" \
             "Verify audit rules for usermod command" \
-            "Tracks user account modifications"
-        ((MANUAL_CHECKS++))
+            "Tracks user account modifications" \
+            "Add audit rules for usermod command execution"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure usermod monitoring?"; then
         local USERMOD_PATH=$(which usermod 2>/dev/null || echo "/usr/sbin/usermod")
         backup_file "/etc/audit/rules.d/50-usermod.rules"
@@ -875,7 +1399,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: usermod monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure usermod command usage is collected" \
+            "usermod location: $(which usermod 2>/dev/null || echo 'Not found')" \
+            "Monitor usermod command execution" \
+            "Verify audit rules for usermod command" \
+            "Tracks user account modifications" \
+            "Add audit rules for usermod command execution"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.19 - Ensure kernel module loading unloading and modification is collected
@@ -883,14 +1415,18 @@ EOF
     log_info "[${control_id}] Ensure kernel module loading unloading and modification is collected"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '-k kernel_modules'; then
+        log_success "[${control_id}] PASS: kernel module audit rules are loaded"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure kernel module operations are collected" \
             "Current rules: $(auditctl -l 2>/dev/null | grep modules || echo 'No rules found')" \
             "Monitor kernel module operations" \
             "Verify audit rules for init_module, delete_module, finit_module syscalls" \
-            "Tracks kernel module changes"
-        ((MANUAL_CHECKS++))
+            "Tracks kernel module changes" \
+            "Add kernel module audit rules"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Configure kernel module monitoring?"; then
         backup_file "/etc/audit/rules.d/50-kernel_modules.rules"
         cat > /etc/audit/rules.d/50-kernel_modules.rules << EOF
@@ -902,7 +1438,15 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Kernel module monitoring configured"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure kernel module operations are collected" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep modules || echo 'No rules found')" \
+            "Monitor kernel module operations" \
+            "Verify audit rules for init_module, delete_module, finit_module syscalls" \
+            "Tracks kernel module changes" \
+            "Add kernel module audit rules"
+        ((FAILED_CHECKS++))
     fi
     
     # 6.3.3.20 - Ensure the audit configuration is immutable
@@ -910,14 +1454,18 @@ EOF
     log_info "[${control_id}] Ensure the audit configuration is immutable"
     ((TOTAL_CHECKS++))
     
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_check_manual "${control_id}" \
+    if audit_rule_exists_regex '^-e 2'; then
+        log_success "[${control_id}] PASS: audit configuration is immutable"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_check_failed "${control_id}" \
             "Ensure the audit configuration is immutable" \
             "Current rules: $(auditctl -l 2>/dev/null | grep '^-e 2' || echo 'Not immutable')" \
             "Make audit configuration immutable" \
             "Add '-e 2' as the last line in /etc/audit/rules.d/99-finalize.rules" \
-            "Prevents runtime modification of audit rules (requires reboot to change)"
-        ((MANUAL_CHECKS++))
+            "Prevents runtime modification of audit rules (requires reboot to change)" \
+            "Add -e 2 to audit rule configuration and reload rules"
+        ((FAILED_CHECKS++))
     elif confirm_action "[${control_id}] Make audit configuration immutable? (Requires reboot to modify)"; then
         backup_file "/etc/audit/rules.d/99-finalize.rules"
         cat > /etc/audit/rules.d/99-finalize.rules << 'EOF'
@@ -928,9 +1476,17 @@ EOF
         augenrules --load &>/dev/null || true
         log_success "[${control_id}] Remediated: Audit configuration set to immutable"
         ((REMEDIATED_CHECKS++))
-        ((MANUAL_CHECKS++))
+    else
+        log_check_failed "${control_id}" \
+            "Ensure the audit configuration is immutable" \
+            "Current rules: $(auditctl -l 2>/dev/null | grep '^-e 2' || echo 'Not immutable')" \
+            "Make audit configuration immutable" \
+            "Add '-e 2' as the last line in /etc/audit/rules.d/99-finalize.rules" \
+            "Prevents runtime modification of audit rules (requires reboot to change)" \
+            "Add -e 2 to audit rule configuration and reload rules"
+        ((FAILED_CHECKS++))
     fi
-    
+
     # 6.3.3.21 - Ensure the running and on disk configuration is the same
     control_id="6.3.3.21"
     log_info "[${control_id}] Ensure the running and on disk configuration is the same"
@@ -948,34 +1504,175 @@ EOF
     ((MANUAL_CHECKS++))
     
     # Section 6.3.4: Configure auditd File Access (checks 1-10)
-    local file_access_checks=(
-        "audit log file directory mode|/var/log/audit directory|0750 or more restrictive"
-        "audit log files mode|/var/log/audit/*.log files|0600 or more restrictive"
-        "audit log files owner|/var/log/audit/*.log files|root ownership"
-        "audit log files group owner|/var/log/audit/*.log files|root group"
-        "audit configuration files mode|/etc/audit/ config files|0640 or more restrictive"
-        "audit configuration files owner|/etc/audit/ config files|root ownership"
-        "audit configuration files group owner|/etc/audit/ config files|root group"
-        "audit tools mode|/sbin/auditctl, /sbin/aureport, etc.|0755 or more restrictive"
-        "audit tools owner|/sbin/auditctl, /sbin/aureport, etc.|root ownership"
-        "audit tools group owner|/sbin/auditctl, /sbin/aureport, etc.|root group"
-    )
-    
     for i in {1..10}; do
         control_id="6.3.4.${i}"
         ((TOTAL_CHECKS++))
-        IFS='|' read -r desc target expected <<< "${file_access_checks[$((i-1))]}"
-        log_check_manual "${control_id}" \
-            "Ensure ${desc} is configured" \
-            "Current permissions: $(ls -ld ${target} 2>/dev/null || echo 'Check manually')" \
-            "Expected: ${expected}" \
-            "1. Check current: ls -ld ${target}
-2. Set ownership: chown root:root ${target}
-3. Set permissions: chmod <mode> ${target}
-4. Verify: ls -ld ${target}
-5. See CIS Benchmark Section 6.3.4.${i} for exact requirements" \
-            "Proper file permissions protect audit system integrity"
-        ((MANUAL_CHECKS++))
+        local failures=()
+        local target_paths=()
+
+        case ${i} in
+            1)
+                target_paths=("/var/log/audit")
+                for path in "${target_paths[@]}"; do
+                    if [[ ! -d "${path}" ]]; then
+                        failures+=("${path}: directory missing")
+                        continue
+                    fi
+                    local mode owner group
+                    read -r mode owner group < <(stat -Lc '%a %U %G' "${path}" 2>/dev/null)
+                    if (( 10#${mode} > 750 )); then
+                        failures+=("${path}: mode ${mode} is more permissive than 750")
+                    fi
+                    if [[ "${owner}" != "root" ]]; then
+                        failures+=("${path}: owner ${owner} is not root")
+                    fi
+                    if [[ "${group}" != "root" ]]; then
+                        failures+=("${path}: group ${group} is not root")
+                    fi
+                done
+                ;;
+            2)
+                while IFS= read -r -d '' logfile; do
+                    target_paths+=("${logfile}")
+                done < <(find /var/log/audit -maxdepth 1 -type f -name '*.log' -print0 2>/dev/null)
+                if [[ ${#target_paths[@]} -eq 0 ]]; then
+                    failures+=("No audit log files found in /var/log/audit")
+                fi
+                for path in "${target_paths[@]}"; do
+                    local mode owner group
+                    read -r mode owner group < <(stat -Lc '%a %U %G' "${path}" 2>/dev/null)
+                    if (( 10#${mode} > 600 )); then
+                        failures+=("${path}: mode ${mode} is more permissive than 600")
+                    fi
+                done
+                ;;
+            3)
+                while IFS= read -r -d '' logfile; do
+                    target_paths+=("${logfile}")
+                done < <(find /var/log/audit -maxdepth 1 -type f -name '*.log' -print0 2>/dev/null)
+                if [[ ${#target_paths[@]} -eq 0 ]]; then
+                    failures+=("No audit log files found in /var/log/audit")
+                fi
+                for path in "${target_paths[@]}"; do
+                    local owner
+                    owner=$(stat -Lc '%U' "${path}" 2>/dev/null)
+                    if [[ "${owner}" != "root" ]]; then
+                        failures+=("${path}: owner ${owner} is not root")
+                    fi
+                done
+                ;;
+            4)
+                while IFS= read -r -d '' logfile; do
+                    target_paths+=("${logfile}")
+                done < <(find /var/log/audit -maxdepth 1 -type f -name '*.log' -print0 2>/dev/null)
+                if [[ ${#target_paths[@]} -eq 0 ]]; then
+                    failures+=("No audit log files found in /var/log/audit")
+                fi
+                for path in "${target_paths[@]}"; do
+                    local group
+                    group=$(stat -Lc '%G' "${path}" 2>/dev/null)
+                    if [[ "${group}" != "root" ]]; then
+                        failures+=("${path}: group ${group} is not root")
+                    fi
+                done
+                ;;
+            5)
+                while IFS= read -r -d '' cfgfile; do
+                    target_paths+=("${cfgfile}")
+                done < <(find /etc/audit -type f -print0 2>/dev/null)
+                if [[ ${#target_paths[@]} -eq 0 ]]; then
+                    failures+=("No audit configuration files found in /etc/audit")
+                fi
+                for path in "${target_paths[@]}"; do
+                    local mode
+                    mode=$(stat -Lc '%a' "${path}" 2>/dev/null)
+                    if (( 10#${mode} > 640 )); then
+                        failures+=("${path}: mode ${mode} is more permissive than 640")
+                    fi
+                done
+                ;;
+            6)
+                while IFS= read -r -d '' cfgfile; do
+                    target_paths+=("${cfgfile}")
+                done < <(find /etc/audit -type f -print0 2>/dev/null)
+                if [[ ${#target_paths[@]} -eq 0 ]]; then
+                    failures+=("No audit configuration files found in /etc/audit")
+                fi
+                for path in "${target_paths[@]}"; do
+                    local owner
+                    owner=$(stat -Lc '%U' "${path}" 2>/dev/null)
+                    if [[ "${owner}" != "root" ]]; then
+                        failures+=("${path}: owner ${owner} is not root")
+                    fi
+                done
+                ;;
+            7)
+                while IFS= read -r -d '' cfgfile; do
+                    target_paths+=("${cfgfile}")
+                done < <(find /etc/audit -type f -print0 2>/dev/null)
+                if [[ ${#target_paths[@]} -eq 0 ]]; then
+                    failures+=("No audit configuration files found in /etc/audit")
+                fi
+                for path in "${target_paths[@]}"; do
+                    local group
+                    group=$(stat -Lc '%G' "${path}" 2>/dev/null)
+                    if [[ "${group}" != "root" ]]; then
+                        failures+=("${path}: group ${group} is not root")
+                    fi
+                done
+                ;;
+            8)
+                local tools=("$(command -v auditctl || true)" "$(command -v ausearch || true)" "$(command -v aureport || true)" "$(command -v augenrules || true)")
+                for path in "${tools[@]}"; do
+                    [[ -n "${path}" ]] || continue
+                    target_paths+=("${path}")
+                    local mode
+                    mode=$(stat -Lc '%a' "${path}" 2>/dev/null)
+                    if (( 10#${mode} > 755 )); then
+                        failures+=("${path}: mode ${mode} is more permissive than 755")
+                    fi
+                done
+                ;;
+            9)
+                local tools=("$(command -v auditctl || true)" "$(command -v ausearch || true)" "$(command -v aureport || true)" "$(command -v augenrules || true)")
+                for path in "${tools[@]}"; do
+                    [[ -n "${path}" ]] || continue
+                    target_paths+=("${path}")
+                    local owner
+                    owner=$(stat -Lc '%U' "${path}" 2>/dev/null)
+                    if [[ "${owner}" != "root" ]]; then
+                        failures+=("${path}: owner ${owner} is not root")
+                    fi
+                done
+                ;;
+            10)
+                local tools=("$(command -v auditctl || true)" "$(command -v ausearch || true)" "$(command -v aureport || true)" "$(command -v augenrules || true)")
+                for path in "${tools[@]}"; do
+                    [[ -n "${path}" ]] || continue
+                    target_paths+=("${path}")
+                    local group
+                    group=$(stat -Lc '%G' "${path}" 2>/dev/null)
+                    if [[ "${group}" != "root" ]]; then
+                        failures+=("${path}: group ${group} is not root")
+                    fi
+                done
+                ;;
+        esac
+
+        if [[ ${#failures[@]} -eq 0 ]]; then
+            log_success "[${control_id}] PASS: audit file access settings are compliant"
+            ((PASSED_CHECKS++))
+        else
+            log_check_failed "${control_id}" \
+                "Ensure audit file access is configured" \
+                "Non-compliant paths:\n$(printf '%s\n' "${failures[@]}" | head -20)" \
+                "Fix ownership and permissions for audit files and tools" \
+                "1. Review the identified paths and adjust permissions/ownership
+2. Set proper modes and ownership for /var/log/audit, /etc/audit, and audit tools
+3. Verify with stat or ls -l" \
+                "Audit files and tools must be restricted to root ownership and secure permissions"
+            ((FAILED_CHECKS++))
+        fi
     done
 }
 

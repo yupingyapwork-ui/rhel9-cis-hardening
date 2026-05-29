@@ -18,8 +18,8 @@ remediate_firewall_software() {
     
     log_info "=== Section 4.1: Configure Firewall Software ==="
     
-    # 4.1.1 - Ensure a single firewall configuration utility is in use
-    local control_id="4.1.1"
+    # 4.1.2 - Ensure a single firewall configuration utility is in use
+    local control_id="4.1.2"
     log_info "[${control_id}] Ensure a single firewall configuration utility is in use"
     ((TOTAL_CHECKS++))
     
@@ -60,6 +60,23 @@ Enabled count: ${enabled_count}"
 5. Verify only one is enabled: systemctl is-enabled firewalld nftables iptables" \
         "Running multiple firewall utilities simultaneously can cause conflicts and security gaps"
     ((MANUAL_CHECKS++))
+
+    # 4.1.1 - Ensure nftables is installed
+    control_id="4.1.1"
+    log_info "[${control_id}] Ensure nftables is installed"
+    ((TOTAL_CHECKS++))
+
+    if rpm -q nftables &>/dev/null; then
+        log_success "[${control_id}] PASS: nftables is installed"
+        ((PASSED_CHECKS++))
+    elif [[ "${DRY_RUN}" == true ]]; then
+        log_warning "[${control_id}] FAIL: nftables is not installed"
+        ((FAILED_CHECKS++))
+    elif confirm_action "[${control_id}] Install nftables?"; then
+        dnf install -y nftables &>/dev/null
+        log_success "[${control_id}] Remediated: nftables installed"
+        ((REMEDIATED_CHECKS++))
+    fi
 }
 
 ################################################################################
@@ -80,105 +97,35 @@ remediate_firewalld() {
         return 0
     fi
     
-    # 4.2.1 - Ensure firewalld is installed
-    local control_id="4.2.1"
-    log_info "[${control_id}] Ensure firewalld is installed"
-    ((TOTAL_CHECKS++))
-    
-    if rpm -q firewalld &>/dev/null; then
-        log_success "[${control_id}] PASS: firewalld is installed"
-        ((PASSED_CHECKS++))
-    elif [[ "${DRY_RUN}" == true ]]; then
-        log_warning "[${control_id}] FAIL: firewalld is not installed"
-        ((FAILED_CHECKS++))
-    elif confirm_action "[${control_id}] Install firewalld?"; then
-        dnf install -y firewalld &>/dev/null
-        log_success "[${control_id}] Remediated: firewalld installed"
-        ((REMEDIATED_CHECKS++))
-    fi
-    
-    # 4.2.2 - Ensure firewalld service is enabled and running
-    control_id="4.2.2"
-    log_info "[${control_id}] Ensure firewalld service is enabled and running"
-    ((TOTAL_CHECKS++))
-    
-    if [[ "${DRY_RUN}" == true ]]; then
-        if systemctl is-enabled firewalld &>/dev/null && systemctl is-active firewalld &>/dev/null; then
-            log_success "[${control_id}] PASS: firewalld is enabled and running"
-            ((PASSED_CHECKS++))
-        else
-            log_warning "[${control_id}] FAIL: firewalld is not enabled or not running"
-            ((FAILED_CHECKS++))
-        fi
-        return 0
-    fi
-    
-    if confirm_action "[${control_id}] Enable and start firewalld?"; then
-        systemctl unmask firewalld 2>/dev/null
-        systemctl enable firewalld 2>/dev/null
-        systemctl start firewalld 2>/dev/null
-        log_success "[${control_id}] Remediated: firewalld enabled and started"
-        ((REMEDIATED_CHECKS++))
-    fi
-    
-    # 4.2.3 - Ensure firewalld default zone is set
-    control_id="4.2.3"
-    log_info "[${control_id}] Ensure firewalld default zone is set"
-    ((TOTAL_CHECKS++))
-    
-    if [[ "${DRY_RUN}" == true ]]; then
-        local default_zone=$(firewall-cmd --get-default-zone 2>/dev/null)
-        if [[ -n "${default_zone}" ]]; then
-            log_success "[${control_id}] PASS: Default zone is set to ${default_zone}"
-            ((PASSED_CHECKS++))
-        else
-            log_warning "[${control_id}] FAIL: No default zone set"
-            ((FAILED_CHECKS++))
-        fi
-        return 0
-    fi
-    
-    if confirm_action "[${control_id}] Set default zone to 'public'?"; then
-        firewall-cmd --set-default-zone=public 2>/dev/null
-        log_success "[${control_id}] Remediated: Default zone set to public"
-        ((REMEDIATED_CHECKS++))
-    fi
-    
-    # 4.2.4 - Ensure network interfaces are assigned to appropriate zone
-    control_id="4.2.4"
-    log_info "[${control_id}] Ensure network interfaces are assigned to appropriate zone"
-    ((TOTAL_CHECKS++))
-    
-    local interface_zones=$(firewall-cmd --get-active-zones 2>/dev/null || echo "Unable to retrieve zone information")
-    local default_zone=$(firewall-cmd --get-default-zone 2>/dev/null || echo "unknown")
-    log_check_manual "${control_id}" \
-        "Verify network interfaces are assigned to appropriate zones" \
-        "Default zone: ${default_zone}
-Active zones and interfaces:
-${interface_zones}" \
-        "Assign each network interface to an appropriate firewalld zone" \
-        "1. List active zones: firewall-cmd --get-active-zones
-2. List available zones: firewall-cmd --get-zones
-3. Assign interface to zone: firewall-cmd --zone=<zone> --change-interface=<interface> --permanent
-4. Reload firewalld: firewall-cmd --reload
-5. Verify assignments: firewall-cmd --get-active-zones" \
-        "Network interfaces should be assigned to zones that match their security requirements (e.g., public, internal, dmz)"
-    ((MANUAL_CHECKS++))
-    
-    # 4.2.5 - Ensure firewalld drops unnecessary services and ports
-    control_id="4.2.5"
+    # 4.2.1 - Ensure firewalld drops unnecessary services and ports
+    control_id="4.2.1"
     log_info "[${control_id}] Ensure firewalld drops unnecessary services and ports"
     ((TOTAL_CHECKS++))
-    
+
+    local firewalld_installed="$(rpm -q firewalld &>/dev/null && echo yes || echo no)"
+    local firewalld_enabled="$(systemctl is-enabled firewalld 2>/dev/null || echo disabled)"
+    local firewalld_active="$(systemctl is-active firewalld 2>/dev/null || echo inactive)"
+    local default_zone=$(firewall-cmd --get-default-zone 2>/dev/null || echo "unknown")
+    local interface_zones=$(firewall-cmd --get-active-zones 2>/dev/null || echo "Unable to retrieve zone information")
     local active_services=$(firewall-cmd --list-services 2>/dev/null || echo "Unable to list services")
     local active_ports=$(firewall-cmd --list-ports 2>/dev/null || echo "Unable to list ports")
-    log_check_manual "${control_id}" \
-        "Review and remove unnecessary services and ports" \
-        "Active services in default zone:
+
+    local evidence="firewalld installed: ${firewalld_installed}
+firewalld enabled: ${firewalld_enabled}
+firewalld active: ${firewalld_active}
+Default zone: ${default_zone}
+Active zones and interfaces:
+${interface_zones}
+
+Active services in default zone:
 ${active_services}
 
 Active ports in default zone:
-${active_ports}" \
+${active_ports}"
+
+    log_check_manual "${control_id}" \
+        "Review and remove unnecessary services and ports" \
+        "${evidence}" \
         "Remove all unnecessary services and ports from firewalld" \
         "1. List services: firewall-cmd --list-services
 2. List ports: firewall-cmd --list-ports
@@ -188,6 +135,30 @@ ${active_ports}" \
 6. Verify changes: firewall-cmd --list-all" \
         "Only services and ports required for business operations should be allowed through the firewall"
     ((MANUAL_CHECKS++))
+
+    # 4.2.2 - Ensure firewalld loopback traffic is configured
+    control_id="4.2.2"
+    log_info "[${control_id}] Ensure firewalld loopback traffic is configured"
+    ((TOTAL_CHECKS++))
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        if firewall-cmd --list-all 2>/dev/null | grep -Eq 'interfaces:.*lo|iif .*lo|127\.0\.0\.1'; then
+            log_success "[${control_id}] PASS: Loopback traffic appears configured in firewalld"
+            ((PASSED_CHECKS++))
+        else
+            log_warning "[${control_id}] FAIL: Loopback traffic not clearly configured in firewalld"
+            ((FAILED_CHECKS++))
+        fi
+    else
+        log_check_manual "${control_id}" \
+            "Verify firewalld allows loopback traffic" \
+            "firewall-cmd --list-all output:\n$(firewall-cmd --list-all 2>/dev/null || echo 'unavailable')" \
+            "Add rules or zone assignments to allow loopback traffic" \
+            "1. Add input loopback rule in nftables if used or assign lo to trusted zone in firewalld
+2. Reload firewalld: firewall-cmd --reload" \
+            "Loopback traffic must be allowed for proper system operation"
+        ((MANUAL_CHECKS++))
+    fi
 }
 
 ################################################################################
@@ -208,47 +179,28 @@ remediate_nftables() {
         return 0
     fi
     
-    # 4.3.1 - Ensure nftables is installed
-    local control_id="4.3.1"
-    log_info "[${control_id}] Ensure nftables is installed"
-    ((TOTAL_CHECKS++))
-    
-    if rpm -q nftables &>/dev/null; then
-        log_success "[${control_id}] PASS: nftables is installed"
-        ((PASSED_CHECKS++))
-    elif [[ "${DRY_RUN}" == true ]]; then
-        log_warning "[${control_id}] FAIL: nftables is not installed"
-        ((FAILED_CHECKS++))
-    elif confirm_action "[${control_id}] Install nftables?"; then
-        dnf install -y nftables &>/dev/null
-        log_success "[${control_id}] Remediated: nftables installed"
-        ((REMEDIATED_CHECKS++))
-    fi
-    
     # 4.3.2 - Ensure nftables service is enabled
     control_id="4.3.2"
-    log_info "[${control_id}] Ensure nftables service is enabled"
+    log_info "[${control_id}] Ensure nftables established connections are configured"
     ((TOTAL_CHECKS++))
-    
-    if [[ "${DRY_RUN}" == true ]]; then
-        if systemctl is-enabled nftables &>/dev/null; then
-            log_success "[${control_id}] PASS: nftables is enabled"
-            ((PASSED_CHECKS++))
-        else
-            log_warning "[${control_id}] FAIL: nftables is not enabled"
-            ((FAILED_CHECKS++))
-        fi
-        return 0
+
+    local established_rules=$(nft list ruleset 2>/dev/null | grep -E "ct state established,related|ct state established" || true)
+    if [[ -n "${established_rules}" ]]; then
+        log_success "[${control_id}] PASS: Established connection rules present"
+        ((PASSED_CHECKS++))
+    else
+        log_check_manual "${control_id}" \
+            "Verify nftables allows established and related connections" \
+            "Current ruleset excerpts:\n$(nft list ruleset 2>/dev/null || echo 'unavailable')" \
+            "Add rules to allow established and related connections" \
+            "1. Add rule to accept established/related: nft add rule inet filter input ct state established,related accept
+2. Save configuration: nft list ruleset > /etc/nftables/nftables.rules" \
+            "Established connections must be allowed to maintain existing sessions"
+        ((MANUAL_CHECKS++))
     fi
     
-    if confirm_action "[${control_id}] Enable nftables?"; then
-        systemctl enable nftables 2>/dev/null
-        log_success "[${control_id}] Remediated: nftables enabled"
-        ((REMEDIATED_CHECKS++))
-    fi
-    
-    # 4.3.3 - Ensure nftables base chains exist
-    control_id="4.3.3"
+    # 4.3.1 - Ensure nftables base chains exist
+    control_id="4.3.1"
     log_info "[${control_id}] Ensure nftables base chains exist"
     ((TOTAL_CHECKS++))
     
@@ -300,8 +252,8 @@ ${loopback_rules}" \
         "Loopback traffic must be allowed for proper system operation"
     ((MANUAL_CHECKS++))
     
-    # 4.3.5 - Ensure nftables default deny firewall policy
-    control_id="4.3.5"
+    # 4.3.3 - Ensure nftables default deny firewall policy
+    control_id="4.3.3"
     log_info "[${control_id}] Ensure nftables default deny firewall policy"
     ((TOTAL_CHECKS++))
     

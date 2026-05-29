@@ -191,8 +191,9 @@ EOF
     local csv_expected=$(echo "${expected_state}" | sed 's/"/""/g' | tr '\n' ' ')
     local csv_reason=$(echo "${reason}" | sed 's/"/""/g' | tr '\n' ' ')
     local csv_remediation=$(echo "${remediation_hint}" | sed 's/"/""/g' | tr '\n' ' ')
+    local section="${check_id%%.*}"
 
-    echo "\"${csv_check_id}\",\"${timestamp}\",\"FAILED\",\"${csv_title}\",\"${csv_current}\",\"${csv_expected}\",\"${csv_reason}\",\"${csv_remediation}\"" >> "${FAILED_CSV}"
+    echo "\"${csv_check_id}\",\"${timestamp}\",\"FAILED\",\"${csv_title}\",\"${csv_current}\",\"${csv_expected}\",\"${csv_reason}\",\"${csv_remediation}\",\"${section}\"" >> "${FAILED_CSV}"
 }
 
 # Enhanced logging function for manual checks with detailed guidance
@@ -272,7 +273,7 @@ EOF
 
     # Initialize failed checks CSV
     cat > "${FAILED_CSV}" << 'EOF'
-"Check ID","Timestamp","Status","Title","Current State","Expected State","Reason","Remediation Guidance"
+"Check ID","Timestamp","Status","Title","Current State","Expected State","Reason","Remediation Guidance","Section"
 EOF
 
     # Initialize manual checks log
@@ -658,6 +659,23 @@ generate_html_report() {
         <p>Compliance Rate: ${compliance_rate}</p>
     </div>
     <p>Generated: $(date)</p>
+    <h2>Detailed Findings</h2>
+    <p>Failed checks CSV: ${FAILED_CSV}</p>
+    <p>Manual checks CSV: ${MANUAL_CSV}</p>
+    <h3>Per-Section Findings</h3>
+    <table border="1" cellpadding="4" cellspacing="0">
+        <tr><th>Section</th><th>Failed</th><th>Manual</th></tr>
+$(
+    # build table rows by aggregating sections from failed and manual CSVs
+    sections=$( (tail -n +2 "${FAILED_CSV}" 2>/dev/null | cut -d',' -f1 | tr -d '"' | sed 's/\..*$//' ; tail -n +2 "${MANUAL_CSV}" 2>/dev/null | awk -F',' '{gsub(/"/,"",$NF); print $NF}') | sort -u)
+    for s in ${sections}; do
+        if [[ -z "${s}" ]]; then continue; fi
+        failed_count=$(awk -F, -v sec="${s}." 'NR>1{gsub(/"/,"",$1); if(index($1,sec)==1) c++} END{print c+0}' "${FAILED_CSV}")
+        manual_count=$(awk -F, -v sec="${s}" 'NR>1{gsub(/"/,"",$NF); if($NF==sec) c++} END{print c+0}' "${MANUAL_CSV}")
+        printf "        <tr><td>%s</td><td>%s</td><td>%s</td></tr>\n" "${s}" "${failed_count}" "${manual_count}"
+    done
+)
+    </table>
 </body>
 </html>
 EOF
@@ -683,6 +701,25 @@ Remediated Checks:      ${REMEDIATED_CHECKS}
 Manual Review Required: ${MANUAL_CHECKS}
 
 Compliance Rate: ${compliance_rate}
+ 
+DETAILED FINDINGS
+=================
+Failed checks CSV: ${FAILED_CSV}
+Manual checks CSV: ${MANUAL_CSV}
+
+Per-Section Findings:
+
+Section | Failed | Manual
+-------------------------
+$(
+    sections=$( (tail -n +2 "${FAILED_CSV}" 2>/dev/null | cut -d',' -f1 | tr -d '"' | sed 's/\..*$//' ; tail -n +2 "${MANUAL_CSV}" 2>/dev/null | awk -F',' '{gsub(/"/,"",$NF); print $NF}') | sort -u)
+    for s in ${sections}; do
+        if [[ -z "${s}" ]]; then continue; fi
+        failed_count=$(awk -F, -v sec="${s}." 'NR>1{gsub(/"/,"",$1); if(index($1,sec)==1) c++} END{print c+0}' "${FAILED_CSV}")
+        manual_count=$(awk -F, -v sec="${s}" 'NR>1{gsub(/"/,"",$NF); if($NF==sec) c++} END{print c+0}' "${MANUAL_CSV}")
+        printf "%s | %s | %s\n" "${s}" "${failed_count}" "${manual_count}"
+    done
+)
 EOF
     log_info "Text report generated: ${REPORT_TEXT}"
 }
